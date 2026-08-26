@@ -146,9 +146,10 @@ SNS 发布：process-media 对每个不同物种发一条消息，`MessageAttrib
 对应评分点：A=认证10+Infra/IAM，B=文件处理20，C=数据管理10+部分查询，D=查询20+跨云认证+报告。
 
 ### Git 提交规范（评分硬要求：GitHub 有全员 commit）
-- **每实现一小块 → 归属到人 → 本地 commit，message 首行带上归属**，格式：
-  `[A] feat: Cognito 注册页 + 路由守卫` / `[B] fix: pipeline 裁剪 bbox 越界` / `[C] feat: bulk tag API` / `[D] test: smoke-test 跨云 401`
-- 归属不清/共用脚手架用 `[team] chore: ...`（如首次搭建目录+gitignore）。
+- **谁实现就谁提交，commit 归属以 `git log`/`git blame` 记录为准，无需特意标注归属。**
+- message 描述清楚做了什么，规范：
+  `feat: 批量标签 API` / `fix: pipeline 裁剪 bbox 越界` / `test: smoke-test 跨云 401` / `docs: 写用户指南`
+- 前端/后端各模块尽量各自 commit（便于看贡献，也符合分工）。首次搭建脚手架由实际提交人归属，不需单独声明。
 - commit 用各自在 GitHub 上配好的 `user.name/email` 提交，记录贡献。
 - 同步到 GitHub 用本机 token 身份 push（私有仓库 `pacific-bioarchive`，团队邀请 4 人 + 教学团队）。
 - 每天至少一次 push，保证 everyone commits today。
