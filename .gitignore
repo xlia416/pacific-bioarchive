@@ -1,0 +1,33 @@
+# 凭证 —— 绝不提交（重要！）
+.env
+.env.*
+!*.env.example
+aws/config-*.json
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# SAM / Serverless Devs
+.aws-sam/
+*.sln
+.samlss/
+.topic_position
+
+# 本地产物
+*.log
+.DS_Store
+media/
+output/
+.media/
+
+# IDE
+.idea/
+.vscode/

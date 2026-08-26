@@ -1,0 +1,4 @@
+# Serverless Devs 安装到 FC 运行时的依赖（FC Python 运行时用 s.yaml 的 artifacts 上传）
+PyJWT>=2.8.0
+requests>=2.31.0
+cryptography>=42.0.0

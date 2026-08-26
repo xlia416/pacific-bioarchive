@@ -1,0 +1,352 @@
+# Pacific BioArchive — AWS 侧 SAM 模板
+# 全部 AWS 资源 IaC 化（会话重置后 sam deploy 可完整重建）。
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Pacific BioArchive AWS stack (Cognito, S3, DynamoDB, Lambda, API Gateway, SNS, ECR)
+
+Parameters:
+  EnvName:
+    Type: String
+    Default: pba
+  # 跨云参数：AWS side 的 process-media 把文件+缩略图复制到阿里云 OSS，并推送 index.json。
+  # 来自团队共享的阿里云 RAM 用户（只读桶 + 只读副本；密钥走 SSM 或部署 -parameter 注入，不入 git）。
+  AliyunOssBucketName:
+    Type: String
+    Default: pba-oss-copy
+  AliyunOssRegion:
+    Type: String
+    Default: cn-hangzhou
+  AliyunOssEndpoint:
+    Type: String
+    Default: oss-cn-hangzhou.aliyuncs.com
+  AliyunOssAccessKeyId:
+    Type: String
+    NoEcho: true
+  AliyunOssAccessKeySecret:
+    Type: String
+    NoEcho: true
+
+Globals:
+  Function:
+    # 注意：容器函数不能继承 Runtime，故 Globals 只放 Environment。
+    Environment:
+      Variables:
+        FILES_TABLE: !Ref FilesTable
+        QUERY_JOBS_TABLE: !Ref QueryJobsTable
+        # 注：UPLOADS_BUCKET 不加在此 —— process-media 从 S3 事件读 bucket，
+        # 避免与它的 ObjectCreated 触发器形成循环依赖；presign 需它在 api-handler 单独配。
+        THUMBS_BUCKET: !Ref ThumbsBucket
+        MODELS_BUCKET: !Ref ModelsBucket
+        OSS_BUCKET: !Ref AliyunOssBucketName
+        OSS_ENDPOINT: !Ref AliyunOssEndpoint
+        OSS_REGION: !Ref AliyunOssRegion
+        OSS_ACCESS_KEY_ID: !Ref AliyunOssAccessKeyId
+        OSS_ACCESS_KEY_SECRET: !Ref AliyunOssAccessKeySecret
+        SNS_TOPIC: !Ref NotifyTopic
+
+# ================= 认证：Cognito（作业强制） =================
+Resources:
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub '${EnvName}-user-pool'
+      AutoVerifiedAttributes: [email]
+      UsernameAttributes:
+        - email
+      Schema:
+        - Name: email
+          Required: true
+          Mutable: true
+        - Name: given_name
+          Required: true
+          Mutable: true
+        - Name: family_name
+          Required: true
+          Mutable: true
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub '${EnvName}-web-app'
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_SRP_AUTH
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes: [openid, email, profile]
+
+  # HTTP API 的 JWT 授权器（挂到各路由）
+  HttpApiAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      ApiId: !Ref HttpApi
+      AuthorizerType: JWT
+      IdentitySource:
+        - $request.header.Authorization
+      JwtConfiguration:
+        Audience:
+          - !Ref UserPoolClient
+        Issuer: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}'
+      Name: CognitoJwtAuth
+
+# ================= 存储 =================
+  UploadsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${EnvName}-uploads-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      # ObjectCreated 触发由 ProcessMediaFunction.Events(S3) 挂载：
+      # SAM 会创建 LambdaPermission + bucket policy，避免与函数 IAM Role 形成循环依赖。
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ['*']
+            AllowedMethods: [PUT, GET]
+            AllowedOrigins: ['*']
+            MaxAge: 3000
+
+  ThumbsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${EnvName}-thumbs-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+
+  ModelsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${EnvName}-models-${AWS::AccountId}'
+
+  # 前端静态托管桶（部署脚本 npm build + s3 sync）
+  WebBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${EnvName}-web-${AWS::AccountId}'
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ['*']
+            AllowedMethods: [GET, HEAD]
+            AllowedOrigins: ['*']
+            MaxAge: 3000
+    Metadata:
+      # S3 静态站不能推 HTTPS；为 Cognito OAuth 回调场景报告会说明用 CloudFront 兜底。
+      Comment: Frontend static hosting
+
+# ================= 数据库（PAY_PER_REQUEST） =================
+  FilesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${EnvName}-files'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: checksum
+          AttributeType: S
+      KeySchema:
+        - AttributeName: checksum
+          KeyType: HASH
+      # 便于按文件类型/时间历史扫描，见 index.json 重建逻辑
+
+  QueryJobsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${EnvName}-query-jobs'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: job_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: job_id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+# ================= 通知 =================
+  NotifyTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${EnvName}-notify'
+
+# ================= API 网关（HTTP API + JWT 授权） =================
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Auth:
+        DefaultAuthorizer: CognitoJwtAuthorizer
+        Authorizers:
+          CognitoJwtAuthorizer:
+            JwtConfiguration:
+              Audience:
+                - !Ref UserPoolClient
+              Issuer: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}'
+            IdentitySource: '$request.header.Authorization'
+      CorsConfiguration:
+        AllowOrigins:
+          - 'http://localhost:5173'
+        AllowHeaders:
+          - content-type
+          - authorization
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+      # 未登录默认拒绝 → 路由守卫逻辑在 ApiHandler 层体现（sign up 之外的注册/校验端点）
+      RouteSettings: {}
+
+# ================= Lambda =================
+  ApiHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api-handler/
+      Runtime: python3.12
+      Handler: app.lambda_handler
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          UPLOADS_BUCKET: !Ref UploadsBucket
+      Policies:
+        - Statement:
+            - Sid: DynamoFiles
+              Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:Scan, dynamodb:DeleteItem]
+              Resource: !GetAtt FilesTable.Arn
+            - Sid: DynamoQueryJobs
+              Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem]
+              Resource: !GetAtt QueryJobsTable.Arn
+            - Sid: S3Uploads
+              Effect: Allow
+              Action: [s3:PutObject, s3:GetObject]
+              Resource:
+                - !Sub '${UploadsBucket.Arn}/*'
+            - Sid: S3Presign
+              Effect: Allow
+              Action: [s3:ListBucket]
+              Resource: !GetAtt UploadsBucket.Arn
+            - Sid: SNSNotify
+              Effect: Allow
+              Action: [sns:Subscribe, sns:Unsubscribe, sns:ListSubscriptionsByTopic]
+              Resource: !Ref NotifyTopic
+      Events:
+        Presign:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /upload/presign
+            Method: POST
+        GetFile:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /files/{checksum}
+            Method: GET
+        QueryFile:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /query/file
+            Method: POST
+        GetQueryJob:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /query/jobs/{job_id}
+            Method: GET
+        BulkTags:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /tags/bulk
+            Method: POST
+        DeleteFiles:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /files/delete
+            Method: POST
+        Subscribe:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /notifications/subscribe
+            Method: POST
+        ListFiles:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /files
+            Method: GET
+
+  # 媒体处理：容器镜像（ECR），推理需 ~6GB 内存 / 长超时
+  ProcessMediaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      ImageUri: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EnvName}-process-media:latest'
+      MemorySize: 6144
+      Timeout: 900
+      Policies:
+        - Statement:
+            - Sid: AllBuckets
+              Effect: Allow
+              Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+              Resource:
+                # 用确定性桶名 Sub 而非 Ref UploadsBucket，
+                # 避免触发 Trigger(Role→Bucket) 循环依赖。
+                - !Sub 'arn:aws:s3:::${EnvName}-uploads-${AWS::AccountId}/*'
+                - !Sub 'arn:aws:s3:::${EnvName}-thumbs-${AWS::AccountId}/*'
+                - !Sub 'arn:aws:s3:::${EnvName}-models-${AWS::AccountId}/*'
+            - Sid: S3ListBuckets
+              Effect: Allow
+              Action: [s3:GetBucketNotification]
+              Resource: !Sub 'arn:aws:s3:::${EnvName}-uploads-${AWS::AccountId}'
+            - Sid: FilesTable
+              Effect: Allow
+              Action: [dynamodb:PutItem, dynamodb:GetItem, dynamodb:UpdateItem, dynamodb:Scan]
+              Resource: !GetAtt FilesTable.Arn
+            - Sid: SNS
+              Effect: Allow
+              Action: [sns:Publish]
+              Resource: !Ref NotifyTopic
+      Events:
+        S3Uploads:
+          Type: S3
+          Properties:
+            Bucket: !Ref UploadsBucket
+            Events: s3:ObjectCreated:*
+
+# ================= 输出 =================
+Outputs:
+  ApiUrl:
+    Description: HTTP API base URL
+    Value: !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com'
+  UserPoolId:
+    Value: !Ref UserPool
+  UserPoolClientId:
+    Value: !Ref UserPoolClient
+  WebUrl:
+    Description: Frontend static hosting URL
+    Value: !GetAtt WebBucket.WebsiteURL
+  NotifyTopicArn:
+    Value: !Ref NotifyTopic
+  UploadsBucket:
+    Value: !Ref UploadsBucket
