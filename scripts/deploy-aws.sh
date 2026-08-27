@@ -1,38 +1,42 @@
 #!/usr/bin/env bash
-# 一键构建并部署整个 AWS 栈（SAM），并把前端 build 产物传到 S3 静态托管。
-# 会话重置后可重复运行以完整重建。
+# 构建并部署 AWS 基础设施。前端必须等阿里云 URL 生成后再单独部署。
+# 会话重置后可重复运行以完整重建（幂等）。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# 若 .env 存在则加载凭证
-if [ -f .env ]; then set -a; source .env; set +a; fi
-
+# 加载凭证（.env 在仓库根，已被 .gitignore 排除，不入 git）
+if [ -f ./.env ]; then set -a; source ./.env; set +a; fi
 export AWS_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
 
-echo "==> [1/4] 构建前端 (Vite)"
-( cd frontend && npm install && npm run build )
+STACK=pba
+: "${ALIBABA_CLOUD_ACCESS_KEY_ID:?set ALIBABA_CLOUD_ACCESS_KEY_ID in .env}"
+: "${ALIBABA_CLOUD_ACCESS_KEY_SECRET:?set ALIBABA_CLOUD_ACCESS_KEY_SECRET in .env}"
 
-STACK=SAM_BUCKET_PLACEHOLDER  # 见下面 TODO
-S3_WEBSITE_BUCKET=$(aws cloudformation describe-stacks --stack-name PacificBioArchive --query "Stacks[0].Outputs[?OutputKey=='WebBucket'].OutputValue" --output text 2>/dev/null || true)
+ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+IMAGE_DIGEST="$(aws ecr describe-images --repository-name pba-process-media \
+  --image-ids imageTag=latest --query 'imageDetails[0].imageDigest' --output text)"
+PROCESS_IMAGE_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/pba-process-media@${IMAGE_DIGEST}"
 
-echo "==> [2/4] SAM 构建与部署"
-sam build --build-dir .aws-sam/build -t aws/template.yaml
+echo "==> [1/2] SAM 构建与部署"
+sam build --build-dir .aws-sam/build -t aws/template.yaml \
+  --parameter-overrides "ProcessMediaImageUri=${PROCESS_IMAGE_URI}"
 sam deploy \
-  --stack-name PacificBioArchive \
+  --template-file .aws-sam/build/template.yaml \
+  --stack-name "$STACK" \
+  --region "$AWS_REGION" \
+  --resolve-s3 \
+  --resolve-image-repos \
+  --parameter-overrides \
+    "ProcessMediaImageUri=${PROCESS_IMAGE_URI}" \
+    "AliyunOssAccessKeyId=${ALIBABA_CLOUD_ACCESS_KEY_ID}" \
+    "AliyunOssAccessKeySecret=${ALIBABA_CLOUD_ACCESS_KEY_SECRET}" \
   --capabilities CAPABILITY_IAM \
-  --s3-bucket "$(aws cloudformation describe-stacks --stack-name PacificBioArchive --query 'Stacks[0].Outputs[?OutputKey==`DeployBucket`].OutputValue' --output text 2>/dev/null || echo "pba-deploy-bucket")" \
+  --on-failure DELETE \
+  --no-confirm-changeset \
   --no-fail-on-empty-changeset
 
-echo "==> [3/4] 上传前端静态站点"
-WEB_BUCKET=$(aws cloudformation describe-stacks --stack-name PacificBioArchive --query "Stacks[0].Outputs[?OutputKey=='WebBucket'].OutputValue" --output text)
-aws s3 sync frontend/dist "s3://$WEB_BUCKET" --delete
-
-echo "==> [4/4] 输出端点"
-aws cloudformation describe-stacks --stack-name PacificBioArchive \
+echo "==> [2/2] 输出端点"
+aws cloudformation describe-stacks --stack-name "$STACK" \
   --query "Stacks[0].Outputs" --output table
 
-echo "✅ AWS 部署完成。打开上面的 WebSiteURL 即可使用。"
-echo "   然后跑 ./scripts/deploy-aliyun.sh 部署阿里云读路径。"
-
-# TODO(实现期): 替换 SAM_BUCKET_PLACEHOLDER 为 部署前先 create-bucket 的引导 bucket，
-# 首个部署用一次性 bucket 名，后续复用同一个。
+echo "✅ AWS 基础设施部署完成。"
