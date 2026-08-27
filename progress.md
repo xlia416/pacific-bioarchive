@@ -4,7 +4,7 @@
 
 ## 一句话状态
 
-数据功能和 **SNS 真实邮件云端验收已通过**：真实上传、去重 409、标签增/删/ignored、query-by-file 隔离清理、跨云删除均成功；`Alectura_lathami_1.JPG` 保留为基准证据；**下一步是视频、Google 外部账号与前端**。
+数据功能、**SNS 真实邮件和视频 1 fps 云端验收已通过**；10 秒视频在 3008 MB 限制下峰值 2802 MB，AWS/OSS/FC 端到端成功；**下一步是 Google 外部账号与前端**。
 
 ## 已完成(均有云上/本地证据)
 
@@ -40,7 +40,9 @@
 - 固定 `onnx==1.22.0`/`onnx2torch==1.5.15`/`protobuf==4.25.8`，只豁免 YOLOv5 对 protobuf 的过严元数据约束
 - 构建期关键 import 通过；真实 `model.pt` 反序列化成功，真实 `mdv5a.pt` 733 层模型加载成功
 - 修正 MegaDetector 10.x `load_and_run_detector_batch` 为全关键字参数调用
-- 15:10 推送 ECR，digest `sha256:9cd6cd9997f58060f2c78434e7441a0aeaee30e1a1c5abd9ed9245d9e2cf047c`
+- 视频修复后最终 ECR digest `sha256:d96410a0f43c1f746142334487e97a8c82ccacd66ed2b713a37bb52941cdabae`
+- 10 帧只加载一次 MegaDetector；MegaDetector 与 SpeciesNet 分阶段驻留，分类结束后释放内存
+- 缩略图改用 Pillow，修复 Lambda 中 `cv2.imwrite` 参数兼容错误
 - Lambda 状态 `Active`/`Successful`，绑定 digest **= ECR latest digest** ✅
 
 > 说明:期间 `deploy-ecr.sh` 曾因隔离 DOCKER_CONFIG 导致 buildx 插件不可见而中止过一轮;
@@ -57,28 +59,30 @@
 - 可删除样本 `Canis_familiaris_3.JPG`：去重=409 且 S3 仍 1 对象；标签增/删/ignored 与 DDB/index/阿里云一致；query-by-file 完成后 Files 表仍 3 条、QueryBucket=0；删除后 AWS/OSS/DDB/index/查询均无该文件
 - FC 依赖已固定为 Python 3.10 运行时兼容组合；OSS 读取失败重试后返回 502，不再静默伪装成空结果
 - SNS 真实邮箱已确认订阅，FilterPolicy 为 `Sus_scrofa`；`Sus_scrofa_1.JPG` 处理为 `Sus_scrofa:1`，CloudWatch 最近窗口记录发布 2、邮件投递 1、失败 0；一次性 Cognito 用户已删除
+- 视频端到端：10 秒 H.264/1280×960 按 1 fps 处理 10 帧，标签 `Sus_scrofa:10` 及低阈值误报 `Bos_taurus:1`；S3/OSS 视频与 300×225 JPEG 缩略图、DDB/index、FC `Sus_scrofa>=10` 查询和签名 URL 均通过
+- 视频冷启动日志：10 帧、MegaDetector 加载 1 次、SpeciesNet 加载 1 次，126.3 s，`Max Memory Used=2802/3008 MB`，无 OOM/超时
 
-### 6. 本地单元测试 11/11 通过 ✅(独立复跑确认)
+### 6. 本地单元测试 13/13 通过 ✅(独立复跑确认)
 
 - test_aliyun × 4:access-token 契约、FC3 HTTP handler+CORS、签名 URL、OSS 读失败不得静默返回空表
 - test_p0 × 7:bulk-tags、跨云删除、FilterPolicy、multipart、查询入队/匹配、index 只含 processed
+- test_pipeline × 2:10 帧共用一次 detector 调用并释放分类器、Pillow 缩略图保持宽高比
 - 运行方式:`python3.12 -m unittest discover -s tests`(需 boto3 可导入,用临时 venv 即可)
 
-### 7. Git 本地提交 11 个
+### 7. Git 本地提交 13 个（本次提交后）
 
-本次数据功能云验收记录提交后共 11 个。仍只有 `lxh` 一位作者，且未配置 remote。
+仍只有 `lxh` 一位作者，且未配置 remote。
 
 ## 待办(按优先级)
 
-1. **Git 风险(评分硬要求)**:本次 SNS 验收记录提交后 12 个 commit **全部单一作者(lxh)**,且**无 remote**。
+1. **Git 风险(评分硬要求)**:本次提交后 13 个 commit **全部单一作者(lxh)**,且**无 remote**。
    需尽快:建/连 GitHub 私有库 → push → 其他 3 位组员按分工提交各自模块
-2. **视频云验收**：生成 10 秒测试视频，验证 1 fps 抽帧、标签计数和完整视频 URL。
-3. **Google 外部账号**：配置 CloudFront HTTPS、Cognito Domain/Google IdP 与回调，验证联邦用户记录。
-4. **前端部署**:config.ts 仍是占位符(设计为部署时注入
+2. **Google 外部账号**：配置 CloudFront HTTPS、Cognito Domain/Google IdP 与回调，验证联邦用户记录。
+3. **前端部署**:config.ts 仍是占位符(设计为部署时注入
    `public/config.js`)；AWS/Cognito/FC URL 均已取得，待写入运行时配置 → 构建 → sync 到 WebBucket
-5. **端到端冒烟**:单图、去重、query-by-file、标签、删除、通知已通过，待视频;
+4. **端到端冒烟**:单图、去重、query-by-file、标签、删除、通知、视频已通过；
    smoke-test.sh 目前只有 2 项真实断言,其余 8 项待实现
-6. **交付物**:架构图、用户指南、团队报告(AI 使用声明必写)、演示演练
+5. **交付物**:架构图、用户指南、团队报告(AI 使用声明必写)、演示演练
 
 ## 部署顺序(已定,勿回退)
 

@@ -22,7 +22,7 @@ SNS_TOPIC = os.environ["SNS_TOPIC"]
 files_tbl = dynamodb.Table(FILES_TABLE)
 query_jobs_tbl = dynamodb.Table(QUERY_JOBS_TABLE)
 
-# 惰性加载模型（全局缓存，跨调用复用，冷启动 60-90s）
+# 全局复用 pipeline 与 /tmp 模型文件；两个大模型按阶段加载，不同时驻留。
 _pipeline = None
 
 
@@ -50,6 +50,7 @@ def _generic_handler(event, context, mode: str):
         bucket = ""
         key = ""
         local = ""
+        thumbnail = ""
         try:
             bucket = rec["s3"]["bucket"]["name"]
             key = urllib.parse.unquote_plus(rec["s3"]["object"]["key"])
@@ -62,6 +63,7 @@ def _generic_handler(event, context, mode: str):
                 results.append(result)
             else:
                 result = pipeline.process(local, checksum=key.split("/")[1], filename=key.split("/")[-1])
+                thumbnail = result.get("_thumbnail_path", "")
 
                 # 先写入返回 URL/key，OSS 副本成功后才将状态置为 processed。
                 files_tbl.update_item(
@@ -114,6 +116,11 @@ def _generic_handler(event, context, mode: str):
             if local and os.path.exists(local):
                 try:
                     os.remove(local)
+                except OSError:
+                    pass
+            if thumbnail and os.path.exists(thumbnail):
+                try:
+                    os.remove(thumbnail)
                 except OSError:
                     pass
     if failures and mode != "query":

@@ -5,6 +5,7 @@ import os
 import json
 import mimetypes
 import subprocess
+import gc
 import boto3
 import numpy as np
 
@@ -25,12 +26,13 @@ class InferencePipeline:
     def __init__(self):
         self.md = None
         self.classifier = None
+        self.classifier_path = None
         self.transform = None
         # ModelsBucket 是私有桶；始终通过 Lambda execution role 读取指针。
         response = s3.get_object(Bucket=MODELS_BUCKET, Key="models/pointer.json")
         ptr = json.loads(response["Body"].read())
         self._load_md(ptr["mdv5a"])
-        self._load_classifier(ptr["speciesnet"])
+        self._prepare_classifier(ptr["speciesnet"])
 
     # ---- 加载 ----
     def _download_model(self, key):
@@ -46,13 +48,21 @@ class InferencePipeline:
         self.md_path = local
         print("[model] md ready at", local)
 
-    def _load_classifier(self, key):
+    def _prepare_classifier(self, key):
+        self.classifier_path = self._download_model(key)
+        print("[model] classifier ready at", self.classifier_path)
+
+    def _ensure_classifier(self):
+        if self.classifier is not None:
+            return
         import torch
         import torchvision.transforms as transforms
-        local = self._download_model(key)
+
         device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
         self.device = device
-        self.classifier = torch.load(local, map_location=device, weights_only=False)
+        self.classifier = torch.load(
+            self.classifier_path, map_location=device, weights_only=False
+        )
         self.classifier.eval().to(device)
         self.transform = transforms.Compose([
             transforms.Resize((480, 480)),
@@ -60,10 +70,18 @@ class InferencePipeline:
         ])
         print(f"[model] classifier loaded on {device}")
 
+    def _release_classifier(self):
+        """Keep model files in /tmp, but do not keep both ML models resident in RAM."""
+        self.classifier = None
+        self.transform = None
+        gc.collect()
+
     # ---- 单类分类（batch.py 的 classify_image，去掉绘图） ----
     def _classify_crop(self, crop_pil):
         import torch
         import torch.nn.functional as F
+
+        self._ensure_classifier()
         img = self.transform(crop_pil).unsqueeze(0).permute(0, 2, 3, 1).to(self.device)
         with torch.no_grad():
             logits = self.classifier(img)
@@ -73,29 +91,57 @@ class InferencePipeline:
 
     # ---- 对外 ----
     def detect(self, image: str) -> dict:
-        """MegaDetector → 裁剪 → SpeciesNet。返回 {species: count}。"""
+        """单图的 MegaDetector → SpeciesNet 入口。"""
+        return self.detect_many([image])
+
+    def detect_many(self, images: list[str]) -> dict:
+        """
+        一次加载 MegaDetector 后顺序处理所有图片。
+
+        Lambda 只允许 3008 MB 内存；若对视频每帧单独调用
+        load_and_run_detector_batch，140M 参数 detector 会被反复加载，
+        实测第 3 帧即可 OOM。
+        """
+        if not images:
+            return {"no_animal": 1}
+
         from PIL import Image
         from megadetector.detection.run_detector_batch import load_and_run_detector_batch
-        # 使用关键字参数，避免 MegaDetector 10.x 中 model_file 作为
-        # 第一个位置参数时与显式 model_file 重复绑定。
+
         res = load_and_run_detector_batch(
             model_file=self.md_path,
-            image_file_names=[image],
+            image_file_names=images,
+            n_cores=1,
+            use_image_queue=False,
+            batch_size=1,
         )
+        # load_and_run_detector_batch 的 detector 已离开作用域。在加载
+        # SpeciesNet 前尽快回收 MegaDetector 对象，避免两个大模型同时驻留。
+        gc.collect()
         tags: dict = {}
-        for entry in res:
-            for det in entry.get("detections", []):
-                if det.get("category") != "1":
+        try:
+            for index, entry in enumerate(res):
+                image = entry.get("file") or images[index]
+                detections = [
+                    det
+                    for det in entry.get("detections", [])
+                    if det.get("category") == "1" and det.get("conf", 0) >= 0.05
+                ]
+                if not detections:
                     continue
-                if det.get("conf", 0) < 0.05:
-                    continue
-                img = Image.open(image).convert("RGB")
-                W, H = img.size
-                x, y, w, h = det["bbox"]
-                crop = img.crop((int(x * W), int(y * H), int((x + w) * W), int((y + h) * H)))
-                crop = crop.resize((600, 600), Image.BILINEAR)
-                species, conf = self._classify_crop(crop)
-                tags[species] = tags.get(species, 0) + 1
+                with Image.open(image) as opened:
+                    img = opened.convert("RGB")
+                    W, H = img.size
+                    for det in detections:
+                        x, y, w, h = det["bbox"]
+                        crop = img.crop(
+                            (int(x * W), int(y * H), int((x + w) * W), int((y + h) * H))
+                        )
+                        crop = crop.resize((600, 600), Image.Resampling.BILINEAR)
+                        species, _conf = self._classify_crop(crop)
+                        tags[species] = tags.get(species, 0) + 1
+        finally:
+            self._release_classifier()
         return tags or {"no_animal": 1}   # 无动物则打一个噪音标签占位，报告讨论阈值
 
     def detect_file(self, source: str) -> dict:
@@ -103,20 +149,21 @@ class InferencePipeline:
         ext = source.rsplit(".", 1)[-1].lower() if "." in source else ""
         if ext not in ("mp4", "mov", "avi", "mkv", "webm"):
             return self.detect(source)
-        tags = {}
-        for frame in self.extract_frames(source):
-            tags = _merge(tags, self.detect(frame))
-        return tags or {"no_animal": 1}
+        frames = self.extract_frames(source)
+        try:
+            return self.detect_many(frames)
+        finally:
+            _remove_files(frames)
 
     def make_thumbnail(self, source: str, size=300) -> str:
-        import cv2
-        img = cv2.imread(source)
-        h, w = img.shape[:2]
-        scale = size / max(h, w)
-        if scale < 1:
-            img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+        """Pillow 等比缩放并压缩 JPEG，避免 OpenCV 5 Lambda 运行时差异。"""
+        from PIL import Image
+
         out = f"/tmp/{os.path.basename(source)}_thumb.jpg"
-        cv2.imwrite(out, img, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        with Image.open(source) as opened:
+            image = opened.convert("RGB")
+            image.thumbnail((size, size), Image.Resampling.LANCZOS)
+            image.save(out, format="JPEG", quality=70, optimize=True)
         return out
 
     def extract_frames(self, video: str, out_dir="/tmp/frames") -> list:
@@ -137,18 +184,28 @@ class InferencePipeline:
 
         thumb = None
         tags: dict = {}
-        if is_video:
-            frames = self.extract_frames(source)
-            for fr in frames:
-                tags = _merge(tags, self.detect(fr))
-            thumb = self.make_thumbnail(frames[0]) if frames else None
-        else:
-            thumb = self.make_thumbnail(source)
-            tags = self.detect(source)
+        frames: list[str] = []
+        try:
+            if is_video:
+                frames = self.extract_frames(source)
+                if not frames:
+                    raise ValueError("video produced no frames at 1 fps")
+                # 先生成缩略图，避免在推理峰值内存后再加载图像库。
+                thumb = self.make_thumbnail(frames[0])
+                tags = self.detect_many(frames)
+            else:
+                thumb = self.make_thumbnail(source)
+                tags = self.detect(source)
 
-        # 上传缩略图到 S3（私有桶）
-        thumb_key = f"thumbs/{checksum}/thumb.jpg"
-        s3.upload_file(thumb, THUMBS_BUCKET, thumb_key, ExtraArgs={"ContentType": "image/jpeg"})
+            # 上传缩略图到 S3（私有桶）
+            thumb_key = f"thumbs/{checksum}/thumb.jpg"
+            s3.upload_file(thumb, THUMBS_BUCKET, thumb_key, ExtraArgs={"ContentType": "image/jpeg"})
+        except Exception:
+            if thumb:
+                _remove_files([thumb])
+            raise
+        finally:
+            _remove_files(frames)
 
         # 稳定 OSS URL（跨云副本）：文件本体 + 缩略图
         oss_url = f"https://{OU_BUCKET}.{OU_ENDPOINT}/uploads/{checksum}/{filename}"
@@ -171,8 +228,9 @@ class InferencePipeline:
         }
 
 
-def _merge(a: dict, b: dict) -> dict:
-    m = dict(a)
-    for k, v in b.items():
-        m[k] = m.get(k, 0) + v
-    return m
+def _remove_files(paths: list[str]):
+    for path in paths:
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
