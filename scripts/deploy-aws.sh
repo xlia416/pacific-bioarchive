@@ -16,20 +16,28 @@ ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 IMAGE_DIGEST="$(aws ecr describe-images --repository-name pba-process-media \
   --image-ids imageTag=latest --query 'imageDetails[0].imageDigest' --output text)"
 PROCESS_IMAGE_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/pba-process-media@${IMAGE_DIGEST}"
+PARAMETER_OVERRIDES=(
+  "ProcessMediaImageUri=${PROCESS_IMAGE_URI}"
+  "AliyunOssAccessKeyId=${ALIBABA_CLOUD_ACCESS_KEY_ID}"
+  "AliyunOssAccessKeySecret=${ALIBABA_CLOUD_ACCESS_KEY_SECRET}"
+)
+if [ -n "${GOOGLE_OAUTH_CLIENT_ID:-}" ] && [ -n "${GOOGLE_OAUTH_CLIENT_SECRET:-}" ]; then
+  PARAMETER_OVERRIDES+=(
+    "GoogleOAuthClientId=${GOOGLE_OAUTH_CLIENT_ID}"
+    "GoogleOAuthClientSecret=${GOOGLE_OAUTH_CLIENT_SECRET}"
+  )
+fi
 
 echo "==> [1/2] SAM 构建与部署"
 sam build --build-dir .aws-sam/build -t aws/template.yaml \
-  --parameter-overrides "ProcessMediaImageUri=${PROCESS_IMAGE_URI}"
+  --parameter-overrides "${PARAMETER_OVERRIDES[@]}"
 sam deploy \
   --template-file .aws-sam/build/template.yaml \
   --stack-name "$STACK" \
   --region "$AWS_REGION" \
   --resolve-s3 \
   --resolve-image-repos \
-  --parameter-overrides \
-    "ProcessMediaImageUri=${PROCESS_IMAGE_URI}" \
-    "AliyunOssAccessKeyId=${ALIBABA_CLOUD_ACCESS_KEY_ID}" \
-    "AliyunOssAccessKeySecret=${ALIBABA_CLOUD_ACCESS_KEY_SECRET}" \
+  --parameter-overrides "${PARAMETER_OVERRIDES[@]}" \
   --capabilities CAPABILITY_IAM \
   --on-failure DELETE \
   --no-confirm-changeset \

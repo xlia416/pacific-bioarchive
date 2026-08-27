@@ -4,12 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Pacific BioArchive</title>
+    <script src="/config.js"></script>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-
-<!-- 静态托管注入：部署时若有 public/config.js，会覆盖 window.__PBA__ 运行时配置。 -->
-<script>window.__PBA__ = window.__PBA__ || { API_BASE: 'http://localhost:5173' };</script>

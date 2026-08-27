@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { api, sha256 } from '../api/client';
+import { api, ApiError, poll, sha256 } from '../api/client';
 
-export function UploadPanel() {
+export function UploadPanel({ onComplete }: { onComplete?: () => void }) {
   const [status, setStatus] = useState<'idle' | 'uploading' | 'processing' | 'duplicate' | 'error'>('idle');
   const [msg, setMsg] = useState('');
 
@@ -10,12 +10,13 @@ export function UploadPanel() {
     try {
       setStatus('uploading');
       const checksum = await sha256(file);
+      const contentType = file.type || 'application/octet-stream';
       let upload;
       try {
         upload = await api.presignUpload({
           filename: file.name,
           checksum,
-          contentType: file.type,
+          contentType,
         });
       } catch (e: any) {
         if (e?.message === 'DUPLICATE') {
@@ -25,10 +26,24 @@ export function UploadPanel() {
         }
         throw e;
       }
-      await fetch(upload.uploadUrl, { method: 'PUT', body: file });
+      const put = await fetch(upload.uploadUrl, { method: 'PUT', headers: { 'Content-Type': contentType }, body: file });
+      if (!put.ok) throw new Error(`S3 upload failed: ${put.status}`);
       setStatus('processing');
-      setMsg('处理中（冷启动约 60–90 秒）…即将自动检测物种并生成缩略图');
+      setMsg('处理中：正在识别物种并生成缩略图…');
+      const record = await poll(
+        () => api.getFile(upload.fileId),
+        (value) => value.status === 'processed' || value.status === 'failed',
+      );
+      if (record.status === 'failed') throw new Error(record.error || '媒体处理失败');
+      setStatus('idle');
+      setMsg(`处理完成：${Object.entries(record.tags || {}).map(([tag, count]) => `${tag}:${count}`).join(', ')}`);
+      onComplete?.();
     } catch (e: any) {
+      if (e instanceof ApiError && e.status === 409) {
+        setStatus('duplicate');
+        setMsg('检测到重复文件：该内容已存在（去重成功）。');
+        return;
+      }
       setStatus('error');
       setMsg(`上传失败：${e?.message ?? e}`);
     }
@@ -50,7 +65,7 @@ export function UploadPanel() {
           }}
         />
       </label>
-      {status !== 'idle' && <div className={`status ${status}`}>{msg}</div>}
+      {msg && <div className={`status ${status}`}>{msg}</div>}
     </section>
   );
 }

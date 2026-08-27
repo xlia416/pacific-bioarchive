@@ -27,11 +27,14 @@ pacific-bioarchive/
 ## 一键部署
 
 ```bash
-./scripts/deploy-aws.sh         # Cognito + API 网关 + Lambda×2 + S3×3 + DynamoDB×2 + SNS，并把前端传到 S3 静态托管
+./scripts/deploy-ecr.sh         # 构建并推送 ML 容器镜像
+./scripts/deploy-aws.sh         # Cognito + API 网关 + Lambda×2 + S3×5 + DynamoDB×2 + SNS + CloudFront
+./scripts/upload-models.sh      # 上传两个模型及 pointer.json
 ./scripts/deploy-aliyun.sh      # fc-query 函数 + OSS 副本桶
+./scripts/deploy-frontend.sh    # 注入运行时配置并发布 React SPA
 ```
 
-部署后浏览器打开 AWS 静态站 URL 即使用。会话重置后重跑两个脚本即可完整重建。
+当前前端地址：<https://df3cv9pa7eg7p.cloudfront.net>。完整顺序为 ECR → AWS → 模型 → 阿里云 → 前端。Google 登录配置见 [docs/google-oauth.md](docs/google-oauth.md)。
 
 ## 分工（详见 PLAN.md）
 

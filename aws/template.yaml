@@ -28,6 +28,20 @@ Parameters:
   AliyunOssAccessKeySecret:
     Type: String
     NoEcho: true
+  GoogleOAuthClientId:
+    Type: String
+    Default: ''
+    Description: Optional Google OAuth web client ID
+  GoogleOAuthClientSecret:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: Optional Google OAuth web client secret
+
+Conditions:
+  HasGoogleProvider: !And
+    - !Not [!Equals [!Ref GoogleOAuthClientId, '']]
+    - !Not [!Equals [!Ref GoogleOAuthClientSecret, '']]
 
 Globals:
   Function:
@@ -84,11 +98,38 @@ Resources:
       AllowedOAuthFlows:
         - code
       AllowedOAuthScopes: [openid, email, profile]
+      SupportedIdentityProviders:
+        - COGNITO
+        - !If [HasGoogleProvider, !Ref GoogleIdentityProvider, !Ref 'AWS::NoValue']
       CallbackURLs:
-        # code flow 必须配回调；演示走本地（http://localhost:5173）。部署后如用 S3 静态站可追加真实 URL。
         - 'http://localhost:5173'
+        - !Sub 'https://${WebDistribution.DomainName}/auth/callback'
       LogoutURLs:
         - 'http://localhost:5173'
+        - !Sub 'https://${WebDistribution.DomainName}/'
+      PreventUserExistenceErrors: ENABLED
+
+  GoogleIdentityProvider:
+    Type: AWS::Cognito::UserPoolIdentityProvider
+    Condition: HasGoogleProvider
+    Properties:
+      UserPoolId: !Ref UserPool
+      ProviderName: Google
+      ProviderType: Google
+      ProviderDetails:
+        client_id: !Ref GoogleOAuthClientId
+        client_secret: !Ref GoogleOAuthClientSecret
+        authorize_scopes: 'openid email profile'
+      AttributeMapping:
+        email: email
+        given_name: given_name
+        family_name: family_name
+
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Sub '${EnvName}-${AWS::AccountId}'
+      UserPoolId: !Ref UserPool
 
   # HTTP API 的 JWT 授权器（挂到各路由）
   HttpApiAuthorizer:
@@ -164,18 +205,69 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub '${EnvName}-web-${AWS::AccountId}'
-      WebsiteConfiguration:
-        IndexDocument: index.html
-        ErrorDocument: index.html
-      CorsConfiguration:
-        CorsRules:
-          - AllowedHeaders: ['*']
-            AllowedMethods: [GET, HEAD]
-            AllowedOrigins: ['*']
-            MaxAge: 3000
-    Metadata:
-      # S3 静态站不能推 HTTPS；为 Cognito OAuth 回调场景报告会说明用 CloudFront 兜底。
-      Comment: Frontend static hosting
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+
+  WebOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${EnvName}-web-oac'
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  WebDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub '${EnvName} authenticated web application'
+        DefaultRootObject: index.html
+        HttpVersion: http2
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: WebS3Origin
+            DomainName: !GetAtt WebBucket.RegionalDomainName
+            OriginAccessControlId: !Ref WebOriginAccessControl
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+        DefaultCacheBehavior:
+          TargetOriginId: WebS3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS]
+          CachedMethods: [GET, HEAD, OPTIONS]
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
+
+  WebBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontRead
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub '${WebBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${WebDistribution}'
 
 # ================= 数据库（PAY_PER_REQUEST） =================
   FilesTable:
@@ -228,6 +320,7 @@ Resources:
       CorsConfiguration:
         AllowOrigins:
           - 'http://localhost:5173'
+          - !Sub 'https://${WebDistribution.DomainName}'
         AllowHeaders:
           - content-type
           - authorization
@@ -405,8 +498,14 @@ Outputs:
   UserPoolClientId:
     Value: !Ref UserPoolClient
   WebUrl:
-    Description: Frontend static hosting URL
-    Value: !GetAtt WebBucket.WebsiteURL
+    Description: Frontend HTTPS URL
+    Value: !Sub 'https://${WebDistribution.DomainName}'
+  CloudFrontDistributionId:
+    Value: !Ref WebDistribution
+  CognitoDomain:
+    Value: !Sub 'https://${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com'
+  GoogleIdPEnabled:
+    Value: !If [HasGoogleProvider, 'true', 'false']
   WebBucket:
     Description: Frontend static hosting bucket name
     Value: !Ref WebBucket

@@ -180,12 +180,13 @@ SNS 发布：process-media 对每个不同物种发一条消息，`MessageAttrib
 | 阿里云 FC/OSS | ✅ 已部署 | FC3 `pba-query` + private `pba-oss-copy`；HTTPS URL `https://pba-query-iseukvgnef.cn-hangzhou.fcapp.run`，无/坏 token=401、OPTIONS=204 |
 | OSS 复制/索引/查询/删除 | ✅ 云端端到端 | 批量标签增/删/忽略不存在标签已验收；跨云删除后 AWS/OSS 四个对象、DDB 记录、index 与阿里云查询结果均消失；基准图不受影响 |
 | 本地单元测试 | ✅ 13/13 | `test_aliyun`×4 + `test_p0`×7 + `test_pipeline`×2（视频批量 detector 单次加载、Pillow 缩略图比例） |
-| Git 贡献记录 | 🔴 高风险 | 本次视频修复提交后本地 13 个 commit，仍**全部单一作者**且**无 remote**；Rubric 硬要求全员有 commit——今天必须建 GitHub 私有库 push，其他成员认领模块提交 |
-| 前端基础认证/上传 | 🟡 部分完成 | 已有 signup/signin/guard/upload；待真实 config、Content-Type、轮询和完整错误处理 |
-| Google 外部账号 | ❌ 必须完成 | Cognito Domain/Google IdP/CloudFront HTTPS callback/联邦用户记录 |
+| Git 贡献记录 | 🔴 高风险 | 本次前端完成后本地仍为单一作者且无 remote；Rubric 硬要求全员有 commit——必须建 GitHub 私有库 push，其他成员认领模块提交 |
+| 前端认证/上传 | ✅ 已部署 | signup/确认/signin/临时密码/guard；预签名 Content-Type、处理轮询、去重和错误提示完整，运行时 config 已注入 |
+| CloudFront HTTPS | ✅ 已部署 | private WebBucket + OAC；SPA 403/404 fallback、API CORS、`/auth/callback` 均已线上验证；URL `https://df3cv9pa7eg7p.cloudfront.net` |
+| Google 外部账号 | 🟡 代码/IaC 就绪 | 缺 Google Cloud OAuth Client ID/Secret；补入 `.env` 后重跑 AWS 与前端部署，再完成真实联邦用户验收 |
 | SNS 真实邮件通知 | ✅ 云端实测 | QQ 邮箱订阅并确认 `Sus_scrofa` FilterPolicy；上传 `Sus_scrofa_1.JPG` 识别为 `Sus_scrofa:1`，CloudWatch 显示邮件投递 1、失败 0 |
 | 视频 1 fps | ✅ 云端端到端 | 10 秒 H.264 抽取/处理 10 帧，`Sus_scrofa:10`；S3/OSS 原视频+缩略图、DDB/index、FC 计数查询和签名 URL 均通过 |
-| Gallery/Query/Tag/Delete/Notification UI | ❌ 待完成 | Rubric 3.2/3.3 的可视化验收界面 |
+| Gallery/Query/Tag/Delete/Notification UI | ✅ 已部署 | 私有 OSS 签名媒体 Gallery、四种查询、批量标签、跨云删除和 SNS 订阅页面已构建并发布 |
 | Smoke test | ❌ 待完成 | 当前仅骨架，必须实现下方 11 项可重复测试 |
 | 报告/架构图/用户指南 | ❌ 待完成 | 官方云图标、贡献表、私有仓库链接、GenAI 声明 |
 
@@ -198,8 +199,8 @@ SNS 发布：process-media 对每个不同物种发一条消息，`MessageAttrib
 5. **修复 ML 镜像依赖与视频内存 ✅**：禁止 pip 回退到无 `megadetector` namespace 的 5.0.4；解决 ONNX/YOLOv5 protobuf 约束；视频帧批量共用一次 MegaDetector，两模型分阶段驻留；SAM 已绑定 `sha256:d96410a0…`。
 6. **Git 卫生（今天完成）**：建 GitHub 私有库并 push → 其他 3 位成员当天认领各自模块提交。Rubric 硬要求全员 commit，此项拖延到 Day 3 即为丢分项。
 7. **数据功能、SNS 与视频云端验收 ✅**：真实上传、去重、标签、query-by-file、跨云删除、邮件通知均已通过；10 秒视频按 1 fps 处理 10 帧，3008 MB 限制下峰值 2802 MB并完成跨云查询。
-8. **完成外部账号**：CloudFront HTTPS → Cognito Domain/Hosted UI → Google OAuth → 回调与 Cognito 联邦记录验收。
-9. **最后部署前端**：用 AWS API URL、Cognito IDs、阿里云 FC URL 生成 `config.js`，build 后上传 WebBucket/CloudFront。
+8. **部署完整前端与 CloudFront ✅**：运行时 `config.js` 注入 AWS API、Cognito、阿里云 FC；完整 Gallery/Query/Tag/Delete/Notification UI 已发布，未登录重定向、SPA fallback、CORS 和无控制台错误已验证。
+9. **激活外部账号（待凭证）**：在 Google Cloud 建 OAuth Web Client，回调指向 Cognito `/oauth2/idpresponse`；将 Client ID/Secret 写入本地 `.env`，重跑 AWS/前端部署并确认 Cognito 生成 Google 联邦用户。代码、条件 IaC、PKCE/state 校验与 callback 页面均已就绪。
 10. **冒烟测试**：先单图端到端，再执行全部 11 项；任一核心项失败不得标记总体通过。
 11. **交付物与演示**：完成报告/架构图/用户指南/个人报告，确保全员 commit，按作业上限准备 3 分钟架构讲解和 15 分钟演示。
 

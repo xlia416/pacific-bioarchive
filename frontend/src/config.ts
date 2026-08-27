@@ -6,6 +6,9 @@ export interface AppConfig {
   USER_POOL_ID: string;
   USER_POOL_CLIENT_ID: string;
   REGION: string;
+  COGNITO_DOMAIN: string;
+  OAUTH_REDIRECT_URI: string;
+  GOOGLE_IDP_ENABLED: boolean;
 }
 
 const injected = (window as unknown as { __PBA__?: Partial<AppConfig> }).__PBA__ ?? {};
@@ -16,5 +19,8 @@ export const config: AppConfig = {
   USER_POOL_ID: 'PLACEHOLDER_USER_POOL_ID',
   USER_POOL_CLIENT_ID: 'PLACEHOLDER_USER_POOL_CLIENT_ID',
   REGION: 'us-east-1',
+  COGNITO_DOMAIN: '',
+  OAUTH_REDIRECT_URI: `${window.location.origin}/auth/callback`,
+  GOOGLE_IDP_ENABLED: false,
   ...injected,
 };

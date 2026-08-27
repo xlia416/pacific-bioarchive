@@ -7,6 +7,10 @@ const poolData = {
   ClientId: config.USER_POOL_CLIENT_ID,
 };
 const userPool = new CognitoUserPool(poolData);
+let challengedUser: CognitoUser | null = null;
+const OAUTH_ACCESS_TOKEN = 'pba.oauth.accessToken';
+const OAUTH_CODE_VERIFIER = 'pba.oauth.codeVerifier';
+const OAUTH_STATE = 'pba.oauth.state';
 
 function currentUser() {
   return userPool.getCurrentUser();
@@ -14,6 +18,18 @@ function currentUser() {
 
 /** 拿到当前登录用户的 access token（去调用受保护 API）。Cognito 内部用 localStorage，无需额外 polyfill。 */
 export function getAccessToken(): Promise<string | null> {
+  const oauthToken = localStorage.getItem(OAUTH_ACCESS_TOKEN);
+  if (oauthToken) {
+    try {
+      const encoded = oauthToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+      const padded = encoded.padEnd(Math.ceil(encoded.length / 4) * 4, '=');
+      const payload = JSON.parse(atob(padded));
+      if (Number(payload.exp) * 1000 > Date.now()) return Promise.resolve(oauthToken);
+    } catch {
+      // Fall through to the Cognito SDK session.
+    }
+    localStorage.removeItem(OAUTH_ACCESS_TOKEN);
+  }
   return new Promise((resolve) => {
     const u = currentUser();
     if (!u) return resolve(null);
@@ -56,6 +72,7 @@ export function signIn(username: string, password: string, onNewPasswordRequired
       onSuccess: (session) => resolve(session),
       onFailure: (err) => reject(err),
       newPasswordRequired: () => {
+        challengedUser = u;
         if (onNewPasswordRequired) onNewPasswordRequired();
         else reject(new Error('NEW_PASSWORD_REQUIRED'));
       },
@@ -63,7 +80,58 @@ export function signIn(username: string, password: string, onNewPasswordRequired
   });
 }
 
+export function completeNewPassword(newPassword: string) {
+  return new Promise<CognitoUserSession>((resolve, reject) => {
+    if (!challengedUser) return reject(new Error('没有待完成的改密挑战，请重新登录'));
+    challengedUser.completeNewPasswordChallenge(newPassword, {}, {
+      onSuccess: (session) => { challengedUser = null; resolve(session); },
+      onFailure: reject,
+    });
+  });
+}
+
+function base64Url(bytes: Uint8Array) {
+  let binary = '';
+  bytes.forEach((byte) => (binary += String.fromCharCode(byte)));
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+export async function startGoogleSignIn() {
+  if (!config.COGNITO_DOMAIN || !config.GOOGLE_IDP_ENABLED) throw new Error('Google 登录尚未配置');
+  const verifier = base64Url(crypto.getRandomValues(new Uint8Array(48)));
+  const state = base64Url(crypto.getRandomValues(new Uint8Array(24)));
+  const challenge = base64Url(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))));
+  sessionStorage.setItem(OAUTH_CODE_VERIFIER, verifier);
+  sessionStorage.setItem(OAUTH_STATE, state);
+  const params = new URLSearchParams({
+    client_id: config.USER_POOL_CLIENT_ID, response_type: 'code', scope: 'openid email profile',
+    redirect_uri: config.OAUTH_REDIRECT_URI, identity_provider: 'Google',
+    code_challenge_method: 'S256', code_challenge: challenge, state,
+  });
+  window.location.assign(`${config.COGNITO_DOMAIN}/oauth2/authorize?${params}`);
+}
+
+export async function completeOAuthCallback(code: string, returnedState: string | null) {
+  const verifier = sessionStorage.getItem(OAUTH_CODE_VERIFIER);
+  const expectedState = sessionStorage.getItem(OAUTH_STATE);
+  if (!verifier) throw new Error('OAuth PKCE verifier 不存在，请重新发起登录');
+  if (!returnedState || !expectedState || returnedState !== expectedState) throw new Error('OAuth state 校验失败，请重新发起登录');
+  const response = await fetch(`${config.COGNITO_DOMAIN}/oauth2/token`, {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'authorization_code', client_id: config.USER_POOL_CLIENT_ID,
+      code, redirect_uri: config.OAUTH_REDIRECT_URI, code_verifier: verifier }),
+  });
+  const body = await response.json();
+  if (!response.ok || !body.access_token) throw new Error(body.error_description || body.error || 'OAuth token exchange failed');
+  localStorage.setItem(OAUTH_ACCESS_TOKEN, body.access_token);
+  sessionStorage.removeItem(OAUTH_CODE_VERIFIER);
+  sessionStorage.removeItem(OAUTH_STATE);
+}
+
 export function signOut() {
+  localStorage.removeItem(OAUTH_ACCESS_TOKEN);
+  sessionStorage.removeItem(OAUTH_CODE_VERIFIER);
+  sessionStorage.removeItem(OAUTH_STATE);
   currentUser()?.signOut();
 }
 

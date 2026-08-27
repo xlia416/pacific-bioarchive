@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { signIn } from '../auth/cognito';
+import { completeNewPassword, signIn, startGoogleSignIn } from '../auth/cognito';
+import { config } from '../config';
 
 export function SignInPage() {
   const navigate = useNavigate();
@@ -24,8 +25,7 @@ export function SignInPage() {
     e.preventDefault();
     setError('');
     try {
-      // 临时密码登录后要求改密：这里先记录，落地时用 respondToNewPassword
-      alert(`改密为 ${newPassword.length} 位（TODO: respondToNewPassword 落地）`);
+      await completeNewPassword(newPassword);
       setChallenge(false);
       navigate('/');
     } catch (err: any) {
@@ -55,6 +55,12 @@ export function SignInPage() {
         <p className="muted">
           还没账号？<Link to="/signup">去注册</Link>
         </p>
+        {config.GOOGLE_IDP_ENABLED && <>
+          <div className="divider"><span>或</span></div>
+          <button className="secondary full" type="button" onClick={() => void startGoogleSignIn().catch((err) => setError(err.message))}>
+            使用 Google 登录
+          </button>
+        </>}
       </div>
     </div>
   );
