@@ -8,6 +8,9 @@ Parameters:
   EnvName:
     Type: String
     Default: pba
+  ProcessMediaImageUri:
+    Type: String
+    Description: Immutable ECR image URI including the sha256 digest
   # 跨云参数：AWS side 的 process-media 把文件+缩略图复制到阿里云 OSS，并推送 index.json。
   # 来自团队共享的阿里云 RAM 用户（只读桶 + 只读副本；密钥走 SSM 或部署 -parameter 注入，不入 git）。
   AliyunOssBucketName:
@@ -81,6 +84,11 @@ Resources:
       AllowedOAuthFlows:
         - code
       AllowedOAuthScopes: [openid, email, profile]
+      CallbackURLs:
+        # code flow 必须配回调；演示走本地（http://localhost:5173）。部署后如用 S3 静态站可追加真实 URL。
+        - 'http://localhost:5173'
+      LogoutURLs:
+        - 'http://localhost:5173'
 
   # HTTP API 的 JWT 授权器（挂到各路由）
   HttpApiAuthorizer:
@@ -129,6 +137,27 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub '${EnvName}-models-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+
+  # query-by-file 临时对象与正式上传隔离，不配 ObjectCreated 入库触发。
+  QueryBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${EnvName}-query-${AWS::AccountId}'
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireAbandonedQueryFiles
+            Status: Enabled
+            ExpirationInDays: 1
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
 
   # 前端静态托管桶（部署脚本 npm build + s3 sync）
   WebBucket:
@@ -223,6 +252,8 @@ Resources:
       Environment:
         Variables:
           UPLOADS_BUCKET: !Ref UploadsBucket
+          QUERY_BUCKET: !Ref QueryBucket
+          PROCESS_FUNCTION_NAME: !Ref ProcessMediaFunction
       Policies:
         - Statement:
             - Sid: DynamoFiles
@@ -231,7 +262,7 @@ Resources:
               Resource: !GetAtt FilesTable.Arn
             - Sid: DynamoQueryJobs
               Effect: Allow
-              Action: [dynamodb:GetItem, dynamodb:PutItem]
+              Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem]
               Resource: !GetAtt QueryJobsTable.Arn
             - Sid: S3Uploads
               Effect: Allow
@@ -242,6 +273,14 @@ Resources:
               Effect: Allow
               Action: [s3:ListBucket]
               Resource: !GetAtt UploadsBucket.Arn
+            - Sid: S3QueryFiles
+              Effect: Allow
+              Action: [s3:PutObject, s3:DeleteObject]
+              Resource: !Sub '${QueryBucket.Arn}/*'
+            - Sid: InvokeQueryWorker
+              Effect: Allow
+              Action: [lambda:InvokeFunction]
+              Resource: !GetAtt ProcessMediaFunction.Arn
             - Sid: SNSNotify
               Effect: Allow
               Action: [sns:Subscribe, sns:Unsubscribe, sns:ListSubscriptionsByTopic]
@@ -296,14 +335,21 @@ Resources:
             Path: /files
             Method: GET
 
-  # 媒体处理：容器镜像（ECR），推理需 ~6GB 内存 / 长超时
+  # 媒体处理：容器镜像（ECR）。AWS Lab 账号限制 Lambda 最大内存为 3008MB。
   ProcessMediaFunction:
     Type: AWS::Serverless::Function
     Properties:
       PackageType: Image
-      ImageUri: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EnvName}-process-media:latest'
-      MemorySize: 6144
+      # 部署脚本将 :latest 解析为 digest URI，否则 CloudFormation 不会感知同标签内容变化。
+      ImageUri: !Ref ProcessMediaImageUri
+      MemorySize: 3008
       Timeout: 900
+      Environment:
+        Variables:
+          QUERY_BUCKET: !Ref QueryBucket
+      # 两个模型约 470MB，另需容纳上传媒体、缩略图和视频帧。
+      EphemeralStorage:
+        Size: 4096
       Policies:
         - Statement:
             - Sid: AllBuckets
@@ -315,6 +361,7 @@ Resources:
                 - !Sub 'arn:aws:s3:::${EnvName}-uploads-${AWS::AccountId}/*'
                 - !Sub 'arn:aws:s3:::${EnvName}-thumbs-${AWS::AccountId}/*'
                 - !Sub 'arn:aws:s3:::${EnvName}-models-${AWS::AccountId}/*'
+                - !Sub 'arn:aws:s3:::${EnvName}-query-${AWS::AccountId}/*'
             - Sid: S3ListBuckets
               Effect: Allow
               Action: [s3:GetBucketNotification]
@@ -323,6 +370,10 @@ Resources:
               Effect: Allow
               Action: [dynamodb:PutItem, dynamodb:GetItem, dynamodb:UpdateItem, dynamodb:Scan]
               Resource: !GetAtt FilesTable.Arn
+            - Sid: QueryJobsTable
+              Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem]
+              Resource: !GetAtt QueryJobsTable.Arn
             - Sid: SNS
               Effect: Allow
               Action: [sns:Publish]
@@ -333,6 +384,11 @@ Resources:
           Properties:
             Bucket: !Ref UploadsBucket
             Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: uploads/
 
 # ================= 输出 =================
 Outputs:
@@ -346,7 +402,16 @@ Outputs:
   WebUrl:
     Description: Frontend static hosting URL
     Value: !GetAtt WebBucket.WebsiteURL
+  WebBucket:
+    Description: Frontend static hosting bucket name
+    Value: !Ref WebBucket
   NotifyTopicArn:
     Value: !Ref NotifyTopic
   UploadsBucket:
     Value: !Ref UploadsBucket
+  ModelsBucket:
+    Description: ML model bucket name
+    Value: !Ref ModelsBucket
+  QueryBucket:
+    Description: Temporary query-by-file bucket name
+    Value: !Ref QueryBucket

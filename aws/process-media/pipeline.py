@@ -3,6 +3,7 @@
 
 import os
 import json
+import mimetypes
 import subprocess
 import boto3
 import numpy as np
@@ -25,11 +26,9 @@ class InferencePipeline:
         self.md = None
         self.classifier = None
         self.transform = None
-        # 模型版本化：读 pointer.json
-        import urllib.request
-        ptr_url = f"https://{MODELS_BUCKET}.s3.{os.environ['AWS_REGION']}.amazonaws.com/models/pointer.json"
-        with urllib.request.urlopen(ptr_url, timeout=60) as r:
-            ptr = json.load(r)
+        # ModelsBucket 是私有桶；始终通过 Lambda execution role 读取指针。
+        response = s3.get_object(Bucket=MODELS_BUCKET, Key="models/pointer.json")
+        ptr = json.loads(response["Body"].read())
         self._load_md(ptr["mdv5a"])
         self._load_classifier(ptr["speciesnet"])
 
@@ -44,11 +43,6 @@ class InferencePipeline:
 
     def _load_md(self, key):
         local = self._download_model(key)
-        from megadetector.detection.run_detector_batch import load_and_run_detector_batch
-        from megadetector.visualization import visualize_detector  # noqa
-        # run_detector_batch 是一体的；这里直接加载模型路径给单图模式用
-        # 更可靠做法：用 megadetector 的 DetectorLoader
-        from megadetector.detection import run_detector_batch as rdb
         self.md_path = local
         print("[model] md ready at", local)
 
@@ -99,6 +93,16 @@ class InferencePipeline:
                 tags[species] = tags.get(species, 0) + 1
         return tags or {"no_animal": 1}   # 无动物则打一个噪音标签占位，报告讨论阈值
 
+    def detect_file(self, source: str) -> dict:
+        """查询文件共用检测路径；视频同样严格按 1 帧/秒处理。"""
+        ext = source.rsplit(".", 1)[-1].lower() if "." in source else ""
+        if ext not in ("mp4", "mov", "avi", "mkv", "webm"):
+            return self.detect(source)
+        tags = {}
+        for frame in self.extract_frames(source):
+            tags = _merge(tags, self.detect(frame))
+        return tags or {"no_animal": 1}
+
     def make_thumbnail(self, source: str, size=300) -> str:
         import cv2
         img = cv2.imread(source)
@@ -123,7 +127,6 @@ class InferencePipeline:
 
     def process(self, source: str, checksum: str, filename: str) -> dict:
         """正式入库：生成缩略图/抽帧 + 检测 + 写 S3 缩略图 + 组装 DB/OSS record。"""
-        import shutil
         ext = filename.split(".")[-1].lower()
         is_video = ext in ("mp4", "mov", "avi", "mkv", "webm")
 
@@ -152,8 +155,12 @@ class InferencePipeline:
             "file_type": "video" if is_video else "image",
             "s3_key": f"uploads/{checksum}/{filename}",
             "thumbnail_s3_key": thumb_key,
+            "oss_key": f"uploads/{checksum}/{filename}",
+            "thumbnail_oss_key": f"thumbs/{checksum}/thumb.jpg",
             "oss_url": oss_url,
             "thumbnail_oss_url": thumb_oss_url,
+            "content_type": mimetypes.guess_type(filename)[0] or "application/octet-stream",
+            "_thumbnail_path": thumb,
             "tags": tags,
             "status": "processed",
         }

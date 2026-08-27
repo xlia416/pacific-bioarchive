@@ -4,9 +4,13 @@
 
 import json
 import os
-import hashlib
+import base64
 import time
 import urllib.parse
+import uuid
+from decimal import Decimal
+from email.parser import BytesParser
+from email.policy import default as email_policy
 import boto3
 from botocore.exceptions import ClientError
 
@@ -17,15 +21,25 @@ lambda_client = boto3.client("lambda")
 
 FILES_TABLE = os.environ["FILES_TABLE"]
 UPLOADS_BUCKET = os.environ["UPLOADS_BUCKET"]
+QUERY_BUCKET = os.environ["QUERY_BUCKET"]
+PROCESS_FUNCTION_NAME = os.environ["PROCESS_FUNCTION_NAME"]
+QUERY_JOBS_TABLE = os.environ["QUERY_JOBS_TABLE"]
 SNS_TOPIC = os.environ["SNS_TOPIC"]
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 
 files = dynamodb.Table(FILES_TABLE)
+query_jobs = dynamodb.Table(QUERY_JOBS_TABLE)
 
 # ---- 工具 ----
 
 def _json(body, status=200):
-    return {"statusCode": status, "headers": _cors(), "body": json.dumps(body)}
+    return {"statusCode": status, "headers": _cors(), "body": json.dumps(body, default=_json_default)}
+
+
+def _json_default(value):
+    if isinstance(value, Decimal):
+        return int(value) if value % 1 == 0 else float(value)
+    raise TypeError(f"not JSON serializable: {type(value).__name__}")
 
 def _cors():
     return {
@@ -38,6 +52,41 @@ def _owner(event):
     """从 JWT 授权器注入的 context 取 sub（主张调）。"""
     claims = (event.get("requestContext", {}).get("authorizer", {}) or {}).get("jwt", {})
     return claims.get("claims", {}).get("sub")
+
+
+def _headers(event):
+    return {str(k).lower(): str(v) for k, v in (event.get("headers") or {}).items()}
+
+
+def _body_bytes(event):
+    body = event.get("body") or ""
+    if event.get("isBase64Encoded"):
+        return base64.b64decode(body)
+    return body.encode() if isinstance(body, str) else bytes(body)
+
+
+def _query_upload(event):
+    """取出 query-by-file 的文件。支持 multipart/form-data，也支持原始二进制 body + x-filename。"""
+    headers = _headers(event)
+    content_type = headers.get("content-type", "application/octet-stream")
+    body = _body_bytes(event)
+    if not body:
+        raise ValueError("query file body is empty")
+
+    if content_type.lower().startswith("multipart/form-data"):
+        envelope = (
+            f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode()
+            + body
+        )
+        message = BytesParser(policy=email_policy).parsebytes(envelope)
+        for part in message.iter_parts():
+            filename = part.get_filename()
+            if filename:
+                return os.path.basename(filename), part.get_content_type(), part.get_payload(decode=True)
+        raise ValueError("multipart request has no file part")
+
+    filename = os.path.basename(headers.get("x-filename", "query-upload.bin"))
+    return filename, content_type.split(";", 1)[0], body
 
 def _parse_key_from_url(url: str, bucket: str) -> str:
     """兼容：OSS URL / S3 URL / 裸 key。返回对象 key。"""
@@ -185,15 +234,55 @@ def handler_subscribe(event, ctx):
     return _json({"subscription_arn": sub.get("SubscriptionArn"), "watch_tags": tags})
 
 def handler_query_file(event, ctx):
-    """按上传文件查询：把 multipart 文件落到 temp/ 前缀，异步调 process-media(mode=query)，结果存 QueryJobs（TTL）。"""
-    # 本骨架先返回占位；落地时：读 body → 写 temp/{job_id}.JPG → 触发 container Lambda
-    body = event.get("body") or b""
-    job_id = hashlib.sha1(body[:4096]).hexdigest()[:16] if body else "pending"
-    return _json({"job_id": job_id, "message": "query job accepted (standing up MP multipart handling)"}, 202)
+    """把查询文件放入无入库触发的 QueryBucket，再异步调用容器 Lambda。"""
+    filename, content_type, payload = _query_upload(event)
+    if len(payload) > 9 * 1024 * 1024:
+        return _json({"error": "query file exceeds 9 MB API limit"}, 413)
+
+    job_id = uuid.uuid4().hex
+    key = f"query/{job_id}/{filename}"
+    owner = _owner(event)
+    ttl = int(time.time()) + 3600
+    query_jobs.put_item(Item={
+        "job_id": job_id,
+        "owner": owner,
+        "status": "pending",
+        "query_key": key,
+        "created_at": int(time.time()),
+        "ttl": ttl,
+    })
+    try:
+        s3.put_object(Bucket=QUERY_BUCKET, Key=key, Body=payload, ContentType=content_type)
+        response = lambda_client.invoke(
+            FunctionName=PROCESS_FUNCTION_NAME,
+            InvocationType="Event",
+            Payload=json.dumps({
+                "mode": "query",
+                "job_id": job_id,
+                "owner": owner,
+                "bucket": QUERY_BUCKET,
+                "key": key,
+            }).encode(),
+        )
+        if response.get("StatusCode") != 202:
+            raise RuntimeError(f"query worker returned {response.get('StatusCode')}")
+    except Exception as exc:
+        s3.delete_object(Bucket=QUERY_BUCKET, Key=key)
+        query_jobs.update_item(
+            Key={"job_id": job_id},
+            UpdateExpression="SET #st = :st, #err = :err",
+            ExpressionAttributeNames={"#st": "status", "#err": "error"},
+            ExpressionAttributeValues={":st": "failed", ":err": str(exc)[:1000]},
+        )
+        raise
+    return _json({"job_id": job_id, "status": "pending"}, 202)
 
 def handler_get_query_job(event, ctx):
     job_id = event["pathParameters"]["job_id"]
-    return _json({"job_id": job_id, "tags": {}, "matches": [], "status": "pending"})
+    item = query_jobs.get_item(Key={"job_id": job_id}).get("Item")
+    if not item or item.get("owner") != _owner(event):
+        return _json({"error": "not found"}, 404)
+    return _json(item)
 
 # ---- 路由 ----
 

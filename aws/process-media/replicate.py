@@ -4,6 +4,7 @@
 import os
 import json
 import boto3
+from decimal import Decimal
 
 s3 = boto3.client("s3")
 OU_ENDPOINT = os.environ["OSS_ENDPOINT"]
@@ -30,15 +31,55 @@ def _upload_bytes(key: str, data: bytes, content_type="application/octet-stream"
     bucket.put_object(key, data, headers={"Content-Type": content_type})
 
 
-def replicate_to_oss(result: dict):
-    """把处理好的文件记录复制到 OSS：本体 + 缩略图 + 重建 index.json。"""
-    # 本体与缩略图通常已由 process-media 的 S3 侧持有；这里把 DB 记录落成副本 + index
+def replicate_to_oss(result: dict, source_path: str, thumbnail_path: str):
+    """复制原文件和缩略图到 OSS，然后刷新查询索引。"""
+    bucket = _oss_client()
+    with open(source_path, "rb") as source:
+        bucket.put_object(
+            result["oss_key"],
+            source,
+            headers={"Content-Type": result.get("content_type", "application/octet-stream")},
+        )
+    with open(thumbnail_path, "rb") as thumbnail:
+        bucket.put_object(
+            result["thumbnail_oss_key"],
+            thumbnail,
+            headers={"Content-Type": "image/jpeg"},
+        )
+def rebuild_index():
+    """从 DynamoDB 权威表分页重建 OSS index.json。"""
     files_tbl = _dynamo_table()
-    scan = files_tbl.scan()
-    items = scan.get("Items", [])
-    index = [{"checksum": i["checksum"], "file_type": i.get("file_type"), "tags": i.get("tags", {}),
-              "oss_url": i.get("oss_url"), "thumbnail_oss_url": i.get("thumbnail_oss_url")} for i in items]
-    _upload_bytes("index.json", json.dumps(index, ensure_ascii=False).encode(), "application/json")
+    items = []
+    request = {}
+    while True:
+        page = files_tbl.scan(**request)
+        items.extend(page.get("Items", []))
+        last_key = page.get("LastEvaluatedKey")
+        if not last_key:
+            break
+        request["ExclusiveStartKey"] = last_key
+
+    index = [
+        {
+            "checksum": item["checksum"],
+            "file_type": item.get("file_type"),
+            "tags": item.get("tags", {}),
+            "oss_key": item.get("oss_key"),
+            "thumbnail_oss_key": item.get("thumbnail_oss_key"),
+            "oss_url": item.get("oss_url"),
+            "thumbnail_oss_url": item.get("thumbnail_oss_url"),
+        }
+        for item in items
+        if item.get("status") == "processed"
+    ]
+    payload = json.dumps(index, ensure_ascii=False, default=_json_default).encode()
+    _upload_bytes("index.json", payload, "application/json")
+
+
+def _json_default(value):
+    if isinstance(value, Decimal):
+        return int(value) if value % 1 == 0 else float(value)
+    raise TypeError(f"not JSON serializable: {type(value).__name__}")
 
 
 def _dynamo_table():

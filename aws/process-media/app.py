@@ -6,6 +6,8 @@ import json
 import os
 import boto3
 import traceback
+import urllib.parse
+from decimal import Decimal
 
 s3 = boto3.client("s3")
 dynamodb = boto3.resource("dynamodb")
@@ -14,9 +16,11 @@ sns = boto3.client("sns")
 UPLOADS_BUCKET = os.environ.get("UPLOADS_BUCKET", "")  # 可为空：S3 事件里自含 bucket
 THUMBS_BUCKET = os.environ["THUMBS_BUCKET"]
 FILES_TABLE = os.environ["FILES_TABLE"]
+QUERY_JOBS_TABLE = os.environ["QUERY_JOBS_TABLE"]
 SNS_TOPIC = os.environ["SNS_TOPIC"]
 
 files_tbl = dynamodb.Table(FILES_TABLE)
+query_jobs_tbl = dynamodb.Table(QUERY_JOBS_TABLE)
 
 # 惰性加载模型（全局缓存，跨调用复用，冷启动 60-90s）
 _pipeline = None
@@ -41,56 +45,137 @@ def _generic_handler(event, context, mode: str):
         records = [{"s3": {"bucket": {"name": event.get("bucket", UPLOADS_BUCKET)}, "object": {"key": event["key"]}}}]
 
     results = []
+    failures = []
     for rec in records:
+        bucket = ""
+        key = ""
+        local = ""
         try:
             bucket = rec["s3"]["bucket"]["name"]
-            key = rec["s3"]["object"]["key"]
+            key = urllib.parse.unquote_plus(rec["s3"]["object"]["key"])
             local = f"/tmp/{key.split('/')[-1]}"
             _download(bucket, key, local)
 
             pipeline = _get_pipeline()
             if mode == "query":
-                tags = pipeline.detect(local)   # 仅检测，返回 {species:count}，不写库
-                results.append({"key": key, "tags": tags})
+                result = _process_query(event, pipeline, local, key)
+                results.append(result)
             else:
                 result = pipeline.process(local, checksum=key.split("/")[1], filename=key.split("/")[-1])
-                results.append(result)
 
-                # 写 DynamoDB（tags: M {species:count}）
+                # 先写入返回 URL/key，OSS 副本成功后才将状态置为 processed。
                 files_tbl.update_item(
                     Key={"checksum": key.split("/")[1]},
                     UpdateExpression=(
-                        "SET #st = :st, tags = :tags, thumbnail_s3_key = :th, "
+                        "SET tags = :tags, thumbnail_s3_key = :th, "
+                        "oss_key = :ok, thumbnail_oss_key = :tok, "
                         "oss_url = :oss, thumbnail_oss_url = :toss"
                     ),
-                    ExpressionAttributeNames={"#st": "status"},
                     ExpressionAttributeValues={
-                        ":st": "processed",
                         ":tags": result["tags"],
                         ":th": result["thumbnail_s3_key"],
+                        ":ok": result["oss_key"],
+                        ":tok": result["thumbnail_oss_key"],
                         ":oss": result["oss_url"],
                         ":toss": result["thumbnail_oss_url"],
                     },
                 )
 
-                # 复制到 OSS（多云读副本）——replicate.py
-                from replicate import replicate_to_oss
-                replicate_to_oss(result)
+                # 复制原文件+缩略图到 OSS，并刷新 index.json。
+                from replicate import rebuild_index, replicate_to_oss
+                replicate_to_oss(
+                    result,
+                    source_path=local,
+                    thumbnail_path=result["_thumbnail_path"],
+                )
+
+                files_tbl.update_item(
+                    Key={"checksum": result["checksum"]},
+                    UpdateExpression="SET #st = :st",
+                    ExpressionAttributeNames={"#st": "status"},
+                    ExpressionAttributeValues={":st": "processed"},
+                )
+                rebuild_index()
 
                 # 按物种发 SNS（MessageAttributes.tag 过滤）
                 _publish_sns(result)
-        except Exception:
+                result.pop("_thumbnail_path", None)
+                results.append(result)
+        except Exception as exc:
             traceback.print_exc()
-            try:
-                files_tbl.update_item(
-                    Key={"checksum": key.split("/")[1]},
-                    UpdateExpression="SET #st = :st",
-                    ExpressionAttributeNames={"#st": "status"},
-                    ExpressionAttributeValues={":st": "failed"},
-                )
-            except Exception:
-                pass
-    return {"statusCode": 200, "body": json.dumps(results)}
+            failures.append(str(exc))
+            _record_failure(event, mode, key, exc)
+        finally:
+            if mode == "query" and bucket and key:
+                try:
+                    s3.delete_object(Bucket=bucket, Key=key)
+                except Exception:
+                    traceback.print_exc()
+            if local and os.path.exists(local):
+                try:
+                    os.remove(local)
+                except OSError:
+                    pass
+    if failures and mode != "query":
+        raise RuntimeError("; ".join(failures))
+    return {"statusCode": 200, "body": json.dumps(results, default=_json_default)}
+
+
+def _json_default(value):
+    if isinstance(value, Decimal):
+        return int(value) if value % 1 == 0 else float(value)
+    raise TypeError(f"not JSON serializable: {type(value).__name__}")
+
+
+def _process_query(event, pipeline, local: str, key: str) -> dict:
+    job_id = event["job_id"]
+    tags = pipeline.detect_file(local)
+    matches = []
+    request = {}
+    while True:
+        page = files_tbl.scan(**request)
+        for item in page.get("Items", []):
+            item_tags = item.get("tags", {})
+            if item.get("status") == "processed" and all(int(item_tags.get(tag, 0)) >= 1 for tag in tags):
+                matches.append({
+                    "checksum": item.get("checksum"),
+                    "file_type": item.get("file_type"),
+                    "url": item.get("thumbnail_oss_url") if item.get("file_type") == "image" else item.get("oss_url"),
+                    "full_url": item.get("oss_url"),
+                    "tags": item_tags,
+                })
+        last_key = page.get("LastEvaluatedKey")
+        if not last_key:
+            break
+        request["ExclusiveStartKey"] = last_key
+
+    query_jobs_tbl.update_item(
+        Key={"job_id": job_id},
+        UpdateExpression="SET #st = :st, tags = :tags, matches = :matches",
+        ExpressionAttributeNames={"#st": "status"},
+        ExpressionAttributeValues={":st": "completed", ":tags": tags, ":matches": matches},
+    )
+    return {"job_id": job_id, "key": key, "tags": tags, "matches": matches}
+
+
+def _record_failure(event, mode: str, key: str, exc: Exception):
+    try:
+        if mode == "query" and event.get("job_id"):
+            query_jobs_tbl.update_item(
+                Key={"job_id": event["job_id"]},
+                UpdateExpression="SET #st = :st, #err = :err",
+                ExpressionAttributeNames={"#st": "status", "#err": "error"},
+                ExpressionAttributeValues={":st": "failed", ":err": str(exc)[:1000]},
+            )
+        elif key.startswith("uploads/") and len(key.split("/")) >= 3:
+            files_tbl.update_item(
+                Key={"checksum": key.split("/")[1]},
+                UpdateExpression="SET #st = :st, #err = :err",
+                ExpressionAttributeNames={"#st": "status", "#err": "error"},
+                ExpressionAttributeValues={":st": "failed", ":err": str(exc)[:1000]},
+            )
+    except Exception:
+        traceback.print_exc()
 
 
 def _publish_sns(result: dict):
