@@ -1,10 +1,10 @@
 # Pacific BioArchive 进度记录
 
-> 更新时间:2026-08-27 11:40 左右 · 距截止(08-30 23:55)约 3.5 天
+> 更新时间:2026-08-27 12:20 左右 · 距截止(08-30 23:55)约 3.5 天
 
 ## 一句话状态
 
-AWS 基础设施与容器镜像**已完整部署并验证一致**(digest 对齐);本地单测 10/10 通过;阿里云 OSS 桶已建(空);**下一步是维护模式调用验证 index.json 写入私有 OSS,然后走真实媒体端到端**。
+AWS 基础设施、digest 固定镜像、阿里云 FC/OSS 和数据维护功能**已部署**；本地单测 10/10，FC 无/坏 token=401，maintenance=200 且 private OSS 已生成 `index.json`；**下一步是获取有效 Cognito access token 做数据 API 云端验收，再走真实媒体端到端**。
 
 ## 已完成(均有云上/本地证据)
 
@@ -44,32 +44,35 @@ AWS 基础设施与容器镜像**已完整部署并验证一致**(digest 对齐)
 > 说明:期间 `deploy-ecr.sh` 曾因隔离 DOCKER_CONFIG 导致 buildx 插件不可见而中止过一轮;
 > 修复(仅 login/push 用隔离配置,buildx 构建用原配置)已写入脚本,**且修复后的推送已在上面时间线中成功完成**。
 
-### 5. 本地单元测试 10/10 通过 ✅(独立复跑确认)
+### 5. 阿里云与数据维护云验证 ✅
 
-- test_aliyun × 4:access-token 契约、FC3 HTTP handler+CORS、查询返回私有桶签名 URL
-- test_p0 × 6:bulk-tags 解析签名 URL+重建索引、删除先清 OSS、订阅真实 FilterPolicy、
-  multipart 解析、查询上传入队、index 只含 processed 记录
+- FC3 `pba-query`: `https://pba-query-iseukvgnef.cn-hangzhou.fcapp.run`
+- private `pba-oss-copy`: ACL 已确认为 `private`
+- 无 token=401，坏 token=401，CORS OPTIONS=204
+- ProcessMedia maintenance `rebuild_index`=200，OSS `index.json=[]`
+- 批量标签后刷新索引、跨云删除、SNS FilterPolicy 已实现并部署
+
+### 6. 本地单元测试 10/10 通过 ✅(独立复跑确认)
+
+- test_aliyun × 3:access-token 契约、FC3 HTTP handler+CORS、查询返回私有桶签名 URL
+- test_p0 × 7:bulk-tags、跨云删除、FilterPolicy、multipart、查询入队/匹配、index 只含 processed
 - 运行方式:`python3.12 -m unittest discover -s tests`(需 boto3 可导入,用临时 venv 即可)
 
-### 6. Git 本地提交 5 个
+### 7. Git 本地提交 8 个
 
-最新:`feat: deploy authenticated Aliyun query service`(含 fc-query vendored 依赖)
+数据维护实现提交:`feat: complete cross-cloud data maintenance`；本次进度同步提交后共 8 个。仍只有 `lxh` 一位作者，且未配置 remote。
 
 ## 待办(按优先级)
 
-1. **维护模式调用验证 index.json → 私有 OSS** ⏳(计划中,桶当前为空)
-   - 不涉真实媒体,验证 replicate 链路与 RAM 权限
-2. **提交并推送 6 个未提交文件**:api-handler/app.py、process-media/app.py、replicate.py、
-   template.yaml、scripts/deploy-ecr.sh、tests/test_p0.py
-3. **Git 风险(评分硬要求)**:目前 5 个 commit **全部单一作者(lxh)**,且**无 remote**。
+1. **有效 Cognito token 数据 API 云端验收**：bulk tag → 删标签 → 删不存在标签 → 删文件；SNS 需真实邮箱确认。
+2. **真实媒体端到端**：小图上传 → 私有模型冷启动 → 标签/缩略图 → OSS 副本 → 阿里云查询。
+3. **Git 风险(评分硬要求)**:目前 8 个 commit **全部单一作者(lxh)**,且**无 remote**。
    需尽快:建/连 GitHub 私有库 → push → 其他 3 位组员按分工提交各自模块
-4. **阿里云 FC 部署状态确认**:git 有部署 commit、依赖已 vendored,但 FC HTTP URL
-   未记录、未验证(无有效/无效 JWT 的 401/200 实测)
-5. **前端部署**(依赖阿里云 FC URL):config.ts 仍是占位符(设计为部署时注入
-   `public/config.js`),待 FC URL 后构建 → 写入运行时配置 → sync 到 WebBucket
-6. **端到端冒烟**:真实图片上传 → ML 打标 → 缩略图 → OSS 复制 → 查询 → 删除;
+4. **前端部署**:config.ts 仍是占位符(设计为部署时注入
+   `public/config.js`)；AWS/Cognito/FC URL 均已取得，待写入运行时配置 → 构建 → sync 到 WebBucket
+5. **端到端冒烟**:真实图片上传 → ML 打标 → 缩略图 → OSS 复制 → 查询 → 删除;
    smoke-test.sh 目前只有 2 项真实断言,其余 8 项待实现
-7. **交付物**:架构图、用户指南、团队报告(AI 使用声明必写)、演示演练
+6. **交付物**:架构图、用户指南、团队报告(AI 使用声明必写)、演示演练
 
 ## 部署顺序(已定,勿回退)
 
