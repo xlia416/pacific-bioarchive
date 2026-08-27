@@ -1,10 +1,10 @@
 # Pacific BioArchive 进度记录
 
-> 更新时间:2026-08-27 15:32 左右 · 距截止(08-30 23:55)约 3.5 天
+> 更新时间:2026-08-27 15:43 左右 · 距截止(08-30 23:55)约 3.5 天
 
 ## 一句话状态
 
-真实单图端到端**已通过**：Cognito/presign/S3/ML/DynamoDB/缩略图/OSS/阿里云查询均成功，`Alectura_lathami_1.JPG` 正确识别为 `Alectura_lathami:1`；本地单测 11/11；**下一步是批量标签/删除/SNS 云验收**。
+数据功能云端验收**已通过**：真实上传、去重 409、标签增/删/ignored、query-by-file 隔离清理、跨云删除均成功；`Alectura_lathami_1.JPG` 保留为基准证据；**下一步是 SNS 真实邮件、视频与 Google 外部账号**。
 
 ## 已完成(均有云上/本地证据)
 
@@ -54,6 +54,7 @@
 - ProcessMedia maintenance `rebuild_index`=200；上传后 OSS `index.json` 含 1 条正确媒体记录
 - 批量标签后刷新索引、跨云删除、SNS FilterPolicy 已实现并部署
 - 单图端到端：AWS/OSS 原图+缩略图、index、有效-token 按标签查询、签名 URL、缩略图反查均实测通过
+- 可删除样本 `Canis_familiaris_3.JPG`：去重=409 且 S3 仍 1 对象；标签增/删/ignored 与 DDB/index/阿里云一致；query-by-file 完成后 Files 表仍 3 条、QueryBucket=0；删除后 AWS/OSS/DDB/index/查询均无该文件
 - FC 依赖已固定为 Python 3.10 运行时兼容组合；OSS 读取失败重试后返回 502，不再静默伪装成空结果
 
 ### 6. 本地单元测试 11/11 通过 ✅(独立复跑确认)
@@ -62,18 +63,18 @@
 - test_p0 × 7:bulk-tags、跨云删除、FilterPolicy、multipart、查询入队/匹配、index 只含 processed
 - 运行方式:`python3.12 -m unittest discover -s tests`(需 boto3 可导入,用临时 venv 即可)
 
-### 7. Git 本地提交 10 个
+### 7. Git 本地提交 11 个
 
-本次单图端到端与 FC 依赖修复提交后共 10 个。仍只有 `lxh` 一位作者，且未配置 remote。
+本次数据功能云验收记录提交后共 11 个。仍只有 `lxh` 一位作者，且未配置 remote。
 
 ## 待办(按优先级)
 
-1. **数据变更云验收**：批量标签 → 删标签 → 删不存在标签 → 跨云删文件；SNS 需真实邮箱确认。
-2. **Git 风险(评分硬要求)**:目前 10 个 commit **全部单一作者(lxh)**,且**无 remote**。
+1. **SNS 云验收**：用真实邮箱确认订阅，再上传相应标签图验证通知邮件。
+2. **Git 风险(评分硬要求)**:目前 11 个 commit **全部单一作者(lxh)**,且**无 remote**。
    需尽快:建/连 GitHub 私有库 → push → 其他 3 位组员按分工提交各自模块
 3. **前端部署**:config.ts 仍是占位符(设计为部署时注入
    `public/config.js`)；AWS/Cognito/FC URL 均已取得，待写入运行时配置 → 构建 → sync 到 WebBucket
-4. **端到端冒烟**:单图上传/查询已通过，待去重、query-by-file、标签、删除、视频与通知;
+4. **端到端冒烟**:单图、去重、query-by-file、标签、删除已通过，待视频与通知;
    smoke-test.sh 目前只有 2 项真实断言,其余 8 项待实现
 5. **交付物**:架构图、用户指南、团队报告(AI 使用声明必写)、演示演练
 

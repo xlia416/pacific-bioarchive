@@ -176,11 +176,11 @@ SNS 发布：process-media 对每个不同物种发一条消息，`MessageAttrib
 | Cognito/API Outputs | ✅ 已取得 | UserPool/Client/API URL 由 CloudFormation Outputs 动态读取，不硬编码进仓库 |
 | 模型上传 | ✅ 完成 | ModelsBucket 已有 `mdv5a.pt` (280767041 B)、`model.pt` (211878007 B)、`pointer.json` (45 B)，指针内容已校验 |
 | private pointer 读取 | ✅ 云端实测 | `pipeline.py` 使用 `s3.get_object`；首次真实图片处理已从 private ModelsBucket 下载并加载两个模型 |
-| QueryBucket/query-by-file | ✅ 已部署 | 独立 private 桶+一天过期、显式异步 invoke、QueryJobs 状态、`finally` 删除；本地单测通过 |
+| QueryBucket/query-by-file | ✅ 云端实测 | 真实查询图识别 `Canis_familiaris:1` 并匹配正式文件；Files 表前后均 3 条，QueryBucket 最终 0 对象，QueryJobs=`completed` |
 | 阿里云 FC/OSS | ✅ 已部署 | FC3 `pba-query` + private `pba-oss-copy`；HTTPS URL `https://pba-query-iseukvgnef.cn-hangzhou.fcapp.run`，无/坏 token=401、OPTIONS=204 |
-| OSS 复制/索引/查询 | ✅ 单图云端端到端 | AWS 原图/缩略图与 private OSS 副本均存在；`index.json` 含正确标签；阿里云有效 token 按标签查询、签名 URL 下载、缩略图反查均为 200 |
+| OSS 复制/索引/查询/删除 | ✅ 云端端到端 | 批量标签增/删/忽略不存在标签已验收；跨云删除后 AWS/OSS 四个对象、DDB 记录、index 与阿里云查询结果均消失；基准图不受影响 |
 | 本地单元测试 | ✅ 11/11 | `test_aliyun`×4（新增 OSS 读失败不得静默返回空表）+ `test_p0`×7 |
-| Git 贡献记录 | 🔴 高风险 | 本次修复提交后本地 10 个 commit，仍**全部单一作者**且**无 remote**；Rubric 硬要求全员有 commit——今天必须建 GitHub 私有库 push，其他成员认领模块提交 |
+| Git 贡献记录 | 🔴 高风险 | 本次验收记录提交后本地 11 个 commit，仍**全部单一作者**且**无 remote**；Rubric 硬要求全员有 commit——今天必须建 GitHub 私有库 push，其他成员认领模块提交 |
 | 前端基础认证/上传 | 🟡 部分完成 | 已有 signup/signin/guard/upload；待真实 config、Content-Type、轮询和完整错误处理 |
 | Google 外部账号 | ❌ 必须完成 | Cognito Domain/Google IdP/CloudFront HTTPS callback/联邦用户记录 |
 | Gallery/Query/Tag/Delete/Notification UI | ❌ 待完成 | Rubric 3.2/3.3 的可视化验收界面 |
@@ -195,7 +195,7 @@ SNS 发布：process-media 对每个不同物种发一条消息，`MessageAttrib
 4. **验证 index.json 写入私有 OSS ✅（08-27 12:00 已完成）**：维护模式调用（不加载模型）返回 200 `{"rebuilt": true}`，`pba-oss-copy/index.json` 已落桶（内容 `[]`，Files 表暂无记录，属预期）；跨云复制链路与 RAM 权限已打通。
 5. **修复 ML 镜像依赖 ✅（08-27 15:12 已完成）**：禁止 pip 回退到无 `megadetector` namespace 的 5.0.4；解决 ONNX/YOLOv5 protobuf 约束，构建期 import 门禁通过；真实 `mdv5a.pt` 与 `model.pt` 均已在 linux/amd64 容器加载；SAM 已绑定 `sha256:9cd6cd99…`。
 6. **Git 卫生（今天完成）**：建 GitHub 私有库并 push → 其他 3 位成员当天认领各自模块提交。Rubric 硬要求全员 commit，此项拖延到 Day 3 即为丢分项。
-7. **数据功能代码+单图端到端 ✅，变更类 API 待验收**：真实图片已通过 Cognito → presign → S3 → ML → DynamoDB/缩略图 → OSS → 阿里云查询；待测批量标签、跨云删除和 SNS 真实邮件。
+7. **数据功能云端验收 ✅，SNS 邮件待人工确认**：真实上传、去重 409、标签增/删/ignored、query-by-file 隔离清理、跨云删除均已通过；待真实邮箱确认 SNS 订阅/通知。
 8. **完成外部账号**：CloudFront HTTPS → Cognito Domain/Hosted UI → Google OAuth → 回调与 Cognito 联邦记录验收。
 9. **最后部署前端**：用 AWS API URL、Cognito IDs、阿里云 FC URL 生成 `config.js`，build 后上传 WebBucket/CloudFront。
 10. **冒烟测试**：先单图端到端，再执行全部 11 项；任一核心项失败不得标记总体通过。
