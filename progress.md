@@ -1,10 +1,10 @@
 # Pacific BioArchive 进度记录
 
-> 更新时间:2026-08-27 12:20 左右 · 距截止(08-30 23:55)约 3.5 天
+> 更新时间:2026-08-27 15:12 左右 · 距截止(08-30 23:55)约 3.5 天
 
 ## 一句话状态
 
-AWS 基础设施、digest 固定镜像、阿里云 FC/OSS 和数据维护功能**已部署**；本地单测 10/10，FC 无/坏 token=401，maintenance=200 且 private OSS 已生成 `index.json`；**下一步是获取有效 Cognito access token 做数据 API 云端验收，再走真实媒体端到端**。
+ML 依赖镜像**已修复并重新部署**；真实 `mdv5a.pt`/`model.pt` 容器加载成功，Lambda 已绑定新 digest，maintenance=200，本地单测 10/10；**下一步是有效 Cognito access token 数据 API 验收和真实图片端到端**。
 
 ## 已完成(均有云上/本地证据)
 
@@ -33,13 +33,15 @@ AWS 基础设施、digest 固定镜像、阿里云 FC/OSS 和数据维护功能*
 
 `s3://pba-models-987040391588/models/`:mdv5a.pt (280MB) · model.pt (211MB) · pointer.json
 
-### 4. ECR 容器镜像重建+部署链路一致 ✅
+### 4. ECR 镜像依赖修复+部署链路一致 ✅
 
 时间线(均为 08-27):
-- 11:28:18 容器代码最后修改(app.py / replicate.py / api-handler)
-- 11:29:40 本地镜像构建(amd64,层缓存,仅 COPY 层变化)
-- 11:29:43 推送 ECR,tag `latest`,digest `sha256:9fdf6870…`
-- Lambda `pba-ProcessMediaFunction-fchVsBtcnysb` 绑定的 digest **= ECR latest digest** ✅
+- 固定 `megadetector==10.0.24`，不再回退到无 import namespace 的 5.0.4
+- 固定 `onnx==1.22.0`/`onnx2torch==1.5.15`/`protobuf==4.25.8`，只豁免 YOLOv5 对 protobuf 的过严元数据约束
+- 构建期关键 import 通过；真实 `model.pt` 反序列化成功，真实 `mdv5a.pt` 733 层模型加载成功
+- 修正 MegaDetector 10.x `load_and_run_detector_batch` 为全关键字参数调用
+- 15:10 推送 ECR，digest `sha256:9cd6cd9997f58060f2c78434e7441a0aeaee30e1a1c5abd9ed9245d9e2cf047c`
+- Lambda 状态 `Active`/`Successful`，绑定 digest **= ECR latest digest** ✅
 
 > 说明:期间 `deploy-ecr.sh` 曾因隔离 DOCKER_CONFIG 导致 buildx 插件不可见而中止过一轮;
 > 修复(仅 login/push 用隔离配置,buildx 构建用原配置)已写入脚本,**且修复后的推送已在上面时间线中成功完成**。
@@ -58,15 +60,15 @@ AWS 基础设施、digest 固定镜像、阿里云 FC/OSS 和数据维护功能*
 - test_p0 × 7:bulk-tags、跨云删除、FilterPolicy、multipart、查询入队/匹配、index 只含 processed
 - 运行方式:`python3.12 -m unittest discover -s tests`(需 boto3 可导入,用临时 venv 即可)
 
-### 7. Git 本地提交 8 个
+### 7. Git 本地提交 9 个
 
-数据维护实现提交:`feat: complete cross-cloud data maintenance`；本次进度同步提交后共 8 个。仍只有 `lxh` 一位作者，且未配置 remote。
+本次镜像修复提交后共 9 个。仍只有 `lxh` 一位作者，且未配置 remote。
 
 ## 待办(按优先级)
 
 1. **有效 Cognito token 数据 API 云端验收**：bulk tag → 删标签 → 删不存在标签 → 删文件；SNS 需真实邮箱确认。
 2. **真实媒体端到端**：小图上传 → 私有模型冷启动 → 标签/缩略图 → OSS 副本 → 阿里云查询。
-3. **Git 风险(评分硬要求)**:目前 8 个 commit **全部单一作者(lxh)**,且**无 remote**。
+3. **Git 风险(评分硬要求)**:目前 9 个 commit **全部单一作者(lxh)**,且**无 remote**。
    需尽快:建/连 GitHub 私有库 → push → 其他 3 位组员按分工提交各自模块
 4. **前端部署**:config.ts 仍是占位符(设计为部署时注入
    `public/config.js`)；AWS/Cognito/FC URL 均已取得，待写入运行时配置 → 构建 → sync 到 WebBucket

@@ -76,7 +76,12 @@ class InferencePipeline:
         """MegaDetector → 裁剪 → SpeciesNet。返回 {species: count}。"""
         from PIL import Image
         from megadetector.detection.run_detector_batch import load_and_run_detector_batch
-        res = load_and_run_detector_batch([image], model_file=self.md_path)
+        # 使用关键字参数，避免 MegaDetector 10.x 中 model_file 作为
+        # 第一个位置参数时与显式 model_file 重复绑定。
+        res = load_and_run_detector_batch(
+            model_file=self.md_path,
+            image_file_names=[image],
+        )
         tags: dict = {}
         for entry in res:
             for det in entry.get("detections", []):

@@ -29,15 +29,12 @@ RUN pip install --upgrade pip && \
     pip install --extra-index-url https://download.pytorch.org/whl/cpu \
         torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
-# 按作业 README：python -m pip install megadetector tqdm + python -m pip install onnx2torch。
-# onnx2torch 仅要求 onnx>=1.9.0，但 pip 可能自动选 onnx 1.15（py3.12 无 wheel → 源码编译）。
-# 根治：把 onnx>=1.30 带进同一个 pip 解析（1.22.0 在 linux-x86_64+py3.12 有预编译 wheel，已验证），
-# 锁住版本避免换回 1.15 重编译。megadetector 走 onnxruntime（有 wheel）。
+# 锁定真正提供 `megadetector` import namespace 的版本。
+# 10.0.24 支持 Python 3.12，且 wheel 包含本项目使用的
+# megadetector.detection.run_detector_batch。先单独解析它，禁止 pip
+# 为了 ONNX 的 protobuf 约束静默回退到 5.0.4。
 RUN pip install \
-    "onnx>=1.22" \
-    "megadetector" \
-    "onnx2torch==1.5.15" \
-    onnxruntime \
+    "megadetector==10.0.24" \
     pyyaml \
     tqdm \
     opencv-python-headless \
@@ -46,6 +43,26 @@ RUN pip install \
     requests \
     numpy \
     pillow
+
+# model.pt 的 pickle 实际引用 onnx2torch，因此 ONNX 不能删除。
+# ONNX 1.22 需要 protobuf>=4.25.1，而 ultralytics-yolov5 0.1.1 的元数据
+# 保守地限制 protobuf<=3.20.1。YOLOv5 的 .pt 推理路径不使用 protobuf；
+# 这里显式升级 protobuf，并在下面只豁免这一条已知元数据冲突。
+RUN pip install --upgrade \
+        "protobuf==4.25.8" \
+        "onnx==1.22.0" \
+        "onnx2torch==1.5.15" \
+        onnxruntime \
+    && pip show megadetector protobuf onnx onnx2torch \
+    && (pip check > /tmp/pip-check.txt 2>&1 || true) \
+    && (grep -v '^ultralytics-yolov5 0.1.1 has requirement protobuf<=3.20.1' \
+        /tmp/pip-check.txt > /tmp/unexpected-pip-check.txt || true)
+
+# 任何除上述 protobuf 元数据以外的依赖异常都必须使构建失败；
+# 同时在构建期执行与业务代码完全相同的关键 import。
+RUN cat /tmp/pip-check.txt \
+    && test ! -s /tmp/unexpected-pip-check.txt \
+    && python -c "import onnx2torch; from megadetector.detection.run_detector_batch import load_and_run_detector_batch; print('MegaDetector and onnx2torch imports OK')"
 
 # 业务代码
 COPY app.py pipeline.py replicate.py ./
