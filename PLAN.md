@@ -170,7 +170,7 @@ SNS 发布：process-media 对每个不同物种发一条消息，`MessageAttrib
 
 | 模块 | 状态 | 验证证据/剩余工作 |
 |---|---|---|
-| ECR 容器镜像 | ✅ 完成 | `pba-process-media:latest`，`linux/amd64` 单 OCI manifest；部署时固定不可变 digest，当前为 `sha256:5b33c3…` |
+| ECR 容器镜像 | ✅ 完成 | `pba-process-media:latest`，`linux/amd64` 单 OCI manifest；部署时固定不可变 digest，当前为 `sha256:9fdf6870…`（11:29 重推，Lambda 绑定 digest = ECR latest 已验证一致） |
 | AWS SAM 基础栈 | ✅ 完成 | `pba` 在 `us-east-1` 已 `UPDATE_COMPLETE` |
 | ProcessMedia Lambda 限制适配 | ✅ 完成 | Lab 上限 `MemorySize=3008`，`EphemeralStorage=4096`，`Timeout=900` |
 | Cognito/API Outputs | ✅ 已取得 | UserPool/Client/API URL 由 CloudFormation Outputs 动态读取，不硬编码进仓库 |
@@ -178,7 +178,9 @@ SNS 发布：process-media 对每个不同物种发一条消息，`MessageAttrib
 | private pointer 读取 | ✅ 已部署 | `pipeline.py` 使用 `s3.get_object`；Lambda 已绑定新 digest，待阿里云就绪后做真实媒体冷启动验收 |
 | QueryBucket/query-by-file | ✅ 已部署 | 独立 private 桶+一天过期、显式异步 invoke、QueryJobs 状态、`finally` 删除；本地单测通过 |
 | 阿里云 FC/OSS | ✅ 已部署 | FC3 `pba-query` + private `pba-oss-copy`；HTTPS URL `https://pba-query-iseukvgnef.cn-hangzhou.fcapp.run`，无/坏 token=401、OPTIONS=204 |
-| OSS 复制/索引/删除 | 🟡 部分完成 | 处理路径已实现原图/缩略图复制及入库后重建索引；待阿里云验收，标签修改/删除路径仍待完成 |
+| OSS 复制/索引/删除 | 🟡 部分完成 | 处理路径已实现原图/缩略图复制及入库后重建索引；private 桶已确认，**index.json 写入已验证**（维护调用 200，桶内 `[]` 空数组符合预期）；标签修改/删除路径仍待完成 |
+| 本地单元测试 | ✅ 10/10 | `test_aliyun`×4（token 契约/FC3 handler+CORS/签名 URL）+ `test_p0`×6（签名 URL 解析、删除先清 OSS、FilterPolicy、multipart、查询入队、index 纯净性）；运行：`python3.12 -m unittest discover -s tests`（需 boto3 可导入） |
+| Git 贡献记录 | 🔴 高风险 | 本地 5 个 commit **全部单一作者**、**无 remote**、**6 个文件未提交**（api-handler/process-media app.py、replicate.py、template.yaml、deploy-ecr.sh、test_p0.py）；Rubric 硬要求全员有 commit——今天必须建 GitHub 私有库 push，其他成员认领模块提交 |
 | 前端基础认证/上传 | 🟡 部分完成 | 已有 signup/signin/guard/upload；待真实 config、Content-Type、轮询和完整错误处理 |
 | Google 外部账号 | ❌ 必须完成 | Cognito Domain/Google IdP/CloudFront HTTPS callback/联邦用户记录 |
 | Gallery/Query/Tag/Delete/Notification UI | ❌ 待完成 | Rubric 3.2/3.3 的可视化验收界面 |
@@ -190,11 +192,13 @@ SNS 发布：process-media 对每个不同物种发一条消息，`MessageAttrib
 1. **上传模型 ✅**：两个 `.pt` 和 `pointer.json` 已上传 ModelsBucket，对象大小与指针内容已校验。
 2. **修正运行时 P0 ✅**：private pointer SDK 读取、QueryBucket 隔离、QueryJobs/清理、原图/缩略图 OSS 复制与入库索引已实现；ECR 新镜像已按 digest 固定到 Lambda，SAM 更新成功。
 3. **部署阿里云 ✅**：从 `pba` Outputs 注入 Cognito IDs，FC3 按 access-token `client_id/token_use` 验证，OSS 为 private 且查询结果签发短期 URL。
-4. **完成数据功能（当前步骤）**：批量标签、跨云删除、每次变更重建索引、SNS FilterPolicy。
-5. **完成外部账号**：CloudFront HTTPS → Cognito Domain/Hosted UI → Google OAuth → 回调与 Cognito 联邦记录验收。
-6. **最后部署前端**：用 AWS API URL、Cognito IDs、阿里云 FC URL 生成 `config.js`，build 后上传 WebBucket/CloudFront。
-7. **冒烟测试**：先单图端到端，再执行全部 11 项；任一核心项失败不得标记总体通过。
-8. **交付物与演示**：完成报告/架构图/用户指南/个人报告，确保全员 commit，按作业上限准备 3 分钟架构讲解和 15 分钟演示。
+4. **验证 index.json 写入私有 OSS ✅（08-27 12:00 已完成）**：维护模式调用（不加载模型）返回 200 `{"rebuilt": true}`，`pba-oss-copy/index.json` 已落桶（内容 `[]`，Files 表暂无记录，属预期）；跨云复制链路与 RAM 权限已打通。deploy-ecr.sh 的 buildx 问题已修复并验证（11:29 推送成功、digest 与 Lambda 一致），无需重推。
+5. **Git 卫生（今天完成）**：提交 6 个未提交文件 → 建 GitHub 私有库并 push → 其他 3 位成员当天认领各自模块提交。Rubric 硬要求全员 commit，此项拖延到 Day 3 即为丢分项。
+6. **完成数据功能**：批量标签、跨云删除、每次变更重建索引、SNS FilterPolicy。
+7. **完成外部账号**：CloudFront HTTPS → Cognito Domain/Hosted UI → Google OAuth → 回调与 Cognito 联邦记录验收。
+8. **最后部署前端**：用 AWS API URL、Cognito IDs、阿里云 FC URL 生成 `config.js`，build 后上传 WebBucket/CloudFront。
+9. **冒烟测试**：先单图端到端，再执行全部 11 项；任一核心项失败不得标记总体通过。
+10. **交付物与演示**：完成报告/架构图/用户指南/个人报告，确保全员 commit，按作业上限准备 3 分钟架构讲解和 15 分钟演示。
 
 ## 验证方案（用 30 张测试图，真值=文件名前缀）
 
@@ -217,6 +221,8 @@ SNS 发布：process-media 对每个不同物种发一条消息，`MessageAttrib
 - **IAM 限制**：只能用 LabRole；报告中说明"细粒度权限"设计（前端零凭证、仅预签名 URL、私有桶+Block Public Access、API 网关 JWT 授权、生产级各函数最小权限策略文档化）。
 - **成本**：目标 $50 内花 <$10；process-media 3008MB×实际推理时间，演示数据集分批测试；阿里云使用 FC+OSS。
 - **megadetector 依赖树**容易冲突：固定版本、用 headless opencv、本地 `docker run` 先验证镜像再推。
+- **deploy-ecr.sh 的 DOCKER_CONFIG 隔离只作用于 `docker login` 和 `docker push`**：buildx 构建必须用用户原配置发现 CLI 插件，否则脚本在构建前中止（已修复并经 11:29 一轮成功推送验证；层缓存命中时增量重建约 1 分钟）。
+- **Git 单一作者是评分硬伤**：Rubric 要求全员 commit 记录；任何成员当天必须有 push。
 - **报告 AI 声明**：6.2/6.3 节必须提及 GenAI 使用，否则 0 分。
 
 ## 剩余关键交付文件

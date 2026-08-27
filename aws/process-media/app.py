@@ -189,7 +189,23 @@ def _publish_sns(result: dict):
         )
 
 
+def _maintenance(event):
+    """OSS 删除/索引维护不需要加载 470MB ML 模型。"""
+    from replicate import delete_oss_objects, rebuild_index
+
+    action = event.get("action")
+    if action == "delete_objects":
+        deleted = delete_oss_objects(event.get("keys", []))
+        return {"statusCode": 200, "body": json.dumps({"deleted": deleted})}
+    if action == "rebuild_index":
+        rebuild_index()
+        return {"statusCode": 200, "body": json.dumps({"rebuilt": True})}
+    return {"statusCode": 400, "body": json.dumps({"error": "unknown maintenance action"})}
+
+
 def lambda_handler(event, context):
     # S3 事件自带属性；编排传入 {"mode": "query"}
     mode = (event.get("mode") or "process")
+    if mode == "maintenance":
+        return _maintenance(event)
     return _generic_handler(event, context, mode)

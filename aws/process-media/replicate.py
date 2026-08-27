@@ -46,6 +46,18 @@ def replicate_to_oss(result: dict, source_path: str, thumbnail_path: str):
             thumbnail,
             headers={"Content-Type": "image/jpeg"},
         )
+
+
+def delete_oss_objects(keys):
+    """删除原媒体与缩略图副本；空 key 被忽略。"""
+    bucket = _oss_client()
+    deleted = 0
+    for key in dict.fromkeys(key for key in keys if key):
+        bucket.delete_object(key)
+        deleted += 1
+    return deleted
+
+
 def rebuild_index():
     """从 DynamoDB 权威表分页重建 OSS index.json。"""
     files_tbl = _dynamo_table()

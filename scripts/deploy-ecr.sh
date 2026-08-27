@@ -14,7 +14,6 @@ IMAGE_URI="${REGISTRY}/${REPOSITORY}:latest"
 # macOS Docker Desktop 的全局 credential helper 在非交互脚本中可能卡住。
 # 使用本次运行专用的临时配置，不修改用户的 ~/.docker/config.json。
 TASK_DOCKER_CONFIG="$(mktemp -d /tmp/pba-docker-config.XXXXXX)"
-export DOCKER_CONFIG="$TASK_DOCKER_CONFIG"
 cleanup_docker_config() {
   rm -f "$TASK_DOCKER_CONFIG/config.json"
   rmdir "$TASK_DOCKER_CONFIG" 2>/dev/null || true
@@ -24,7 +23,7 @@ trap cleanup_docker_config EXIT
 aws ecr describe-repositories --repository-names "$REPOSITORY" >/dev/null 2>&1 || \
   aws ecr create-repository --repository-name "$REPOSITORY" >/dev/null
 aws ecr get-login-password --region "$AWS_REGION" | \
-  docker login --username AWS --password-stdin "$REGISTRY"
+  DOCKER_CONFIG="$TASK_DOCKER_CONFIG" docker login --username AWS --password-stdin "$REGISTRY"
 
 docker buildx build \
   --platform linux/amd64 \
@@ -33,7 +32,7 @@ docker buildx build \
   --load \
   --tag "$IMAGE_URI" \
   aws/process-media
-docker push "$IMAGE_URI"
+DOCKER_CONFIG="$TASK_DOCKER_CONFIG" docker push "$IMAGE_URI"
 
 MEDIA_TYPE="$(aws ecr describe-images --repository-name "$REPOSITORY" \
   --image-ids imageTag=latest --query 'imageDetails[0].imageManifestMediaType' --output text)"

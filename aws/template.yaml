@@ -266,9 +266,14 @@ Resources:
               Resource: !GetAtt QueryJobsTable.Arn
             - Sid: S3Uploads
               Effect: Allow
-              Action: [s3:PutObject, s3:GetObject]
+              Action: [s3:PutObject, s3:GetObject, s3:DeleteObject]
               Resource:
                 - !Sub '${UploadsBucket.Arn}/*'
+            - Sid: S3ThumbDeletes
+              Effect: Allow
+              Action: [s3:DeleteObject]
+              Resource:
+                - !Sub '${ThumbsBucket.Arn}/*'
             - Sid: S3Presign
               Effect: Allow
               Action: [s3:ListBucket]

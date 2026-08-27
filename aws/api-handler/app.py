@@ -21,6 +21,7 @@ lambda_client = boto3.client("lambda")
 
 FILES_TABLE = os.environ["FILES_TABLE"]
 UPLOADS_BUCKET = os.environ["UPLOADS_BUCKET"]
+THUMBS_BUCKET = os.environ["THUMBS_BUCKET"]
 QUERY_BUCKET = os.environ["QUERY_BUCKET"]
 PROCESS_FUNCTION_NAME = os.environ["PROCESS_FUNCTION_NAME"]
 QUERY_JOBS_TABLE = os.environ["QUERY_JOBS_TABLE"]
@@ -88,18 +89,31 @@ def _query_upload(event):
     filename = os.path.basename(headers.get("x-filename", "query-upload.bin"))
     return filename, content_type.split(";", 1)[0], body
 
-def _parse_key_from_url(url: str, bucket: str) -> str:
-    """兼容：OSS URL / S3 URL / 裸 key。返回对象 key。"""
-    if not url:
+def _checksum_from_reference(value: str):
+    """从 OSS/S3 规范 URL、签名 URL 或 object key 提取 uploads|thumbs/<checksum>/...。"""
+    if not value:
         return None
-    if "://" in url:
-        parsed = urllib.parse.urlparse(url)
-        # path 形如 /<bucket>/<key...>，取 bucket 之后的剩余部分
-        parts = parsed.path.lstrip("/").split("/", 1)
-        if len(parts) == 2:
-            return parts[1]
-        return parts[0]
-    return url
+    path = urllib.parse.unquote(urllib.parse.urlparse(value).path if "://" in value else value)
+    parts = [part for part in path.strip("/").split("/") if part]
+    for prefix in ("uploads", "thumbs"):
+        if prefix in parts:
+            index = parts.index(prefix)
+            return parts[index + 1] if len(parts) > index + 1 else None
+    # 也允许前端直接传 checksum。
+    return parts[0] if len(parts) == 1 else None
+
+
+def _invoke_maintenance(action, **payload):
+    response = lambda_client.invoke(
+        FunctionName=PROCESS_FUNCTION_NAME,
+        InvocationType="RequestResponse",
+        Payload=json.dumps({"mode": "maintenance", "action": action, **payload}).encode(),
+    )
+    raw = response.get("Payload").read() if response.get("Payload") else b"{}"
+    result = json.loads(raw or b"{}")
+    if response.get("FunctionError") or int(result.get("statusCode", 200)) >= 400:
+        raise RuntimeError(f"media maintenance failed: {result}")
+    return result
 
 # ---- 端点 ----
 
@@ -165,8 +179,7 @@ def handler_bulk_tags(event, ctx):
     updated = 0
     ignored = 0
     for url in urls:
-        key = _parse_key_from_url(url, UPLOADS_BUCKET)
-        checksum = key.split("/")[1] if key else None
+        checksum = _checksum_from_reference(url)
         if not checksum:
             continue
         item = files.get_item(Key={"checksum": checksum}).get("Item")
@@ -190,6 +203,8 @@ def handler_bulk_tags(event, ctx):
             ExpressionAttributeValues={":tags": current},
         )
         updated += 1
+    if updated:
+        _invoke_maintenance("rebuild_index")
     return _json({"updated": updated, "ignored": ignored})
 
 def handler_delete_files(event, ctx):
@@ -197,24 +212,25 @@ def handler_delete_files(event, ctx):
     urls = body.get("urls", [])
     deleted = 0
     for url in urls:
-        key = _parse_key_from_url(url, UPLOADS_BUCKET)
-        checksum = key.split("/")[1] if key else None
+        checksum = _checksum_from_reference(url)
         if not checksum:
             continue
         item = files.get_item(Key={"checksum": checksum}).get("Item")
         if not item:
             continue
-        # 删对象（uploads + thumbs）
-        for k in (item.get("s3_key"), item.get("thumbnail_s3_key")):
-            if k:
-                try:
-                    s3.delete_object(Bucket=UPLOADS_BUCKET, Key=k)
-                except ClientError:
-                    pass
-        # 删 OSS 副本（交给 process-media/replicate.py 通过跨云 API；此处标记待删键）
-        # 记录在案供 replicate 消费：TODO 实现跨云删除
+        # 先删 OSS；失败时保留权威库记录，便于安全重试。
+        _invoke_maintenance(
+            "delete_objects",
+            keys=[item.get("oss_key"), item.get("thumbnail_oss_key")],
+        )
+        if item.get("s3_key"):
+            s3.delete_object(Bucket=UPLOADS_BUCKET, Key=item["s3_key"])
+        if item.get("thumbnail_s3_key"):
+            s3.delete_object(Bucket=THUMBS_BUCKET, Key=item["thumbnail_s3_key"])
         files.delete_item(Key={"checksum": checksum})
         deleted += 1
+    if deleted:
+        _invoke_maintenance("rebuild_index")
     return _json({"deleted": deleted})
 
 def handler_subscribe(event, ctx):
@@ -223,12 +239,14 @@ def handler_subscribe(event, ctx):
     tags = body.get("tags", [])
     if not email:
         return _json({"error": "email required"}, 400)
-    # 为每个 tag 建一个带 FilterPolicy(Attribute=tag, ValuePrefix=spec 例) 的订阅
-    # 简化：一个订阅 + FilterPolicy 匹配多个 tag；落地时用 ProtocolAttributes。
+    tags = sorted({str(tag).strip() for tag in tags if str(tag).strip()})
+    if not tags:
+        return _json({"error": "at least one tag required"}, 400)
     sub = sns.subscribe(
         TopicArn=SNS_TOPIC,
         Protocol="email",
         Endpoint=email,
+        Attributes={"FilterPolicy": json.dumps({"tag": tags})},
         ReturnSubscriptionArn=True,
     )
     return _json({"subscription_arn": sub.get("SubscriptionArn"), "watch_tags": tags})

@@ -78,7 +78,7 @@ class FakeLambda:
 
     def invoke(self, **kwargs):
         self.calls.append(kwargs)
-        return {"StatusCode": 202}
+        return {"StatusCode": 202 if kwargs.get("InvocationType") == "Event" else 200}
 
 
 class QueryApiTests(unittest.TestCase):
@@ -120,6 +120,84 @@ class QueryApiTests(unittest.TestCase):
         self.assertEqual(filename, "query.jpg")
         self.assertEqual(content_type, "image/jpeg")
         self.assertEqual(payload, b"abc123")
+
+
+class ManageFiles:
+    def __init__(self):
+        self.item = {
+            "checksum": "abc",
+            "tags": {"dingo": Decimal(1)},
+            "s3_key": "uploads/abc/photo.jpg",
+            "thumbnail_s3_key": "thumbs/abc/thumb.jpg",
+            "oss_key": "uploads/abc/photo.jpg",
+            "thumbnail_oss_key": "thumbs/abc/thumb.jpg",
+        }
+        self.updates = []
+        self.deletes = []
+
+    def get_item(self, Key):
+        return {"Item": self.item} if Key["checksum"] == "abc" else {}
+
+    def update_item(self, **kwargs):
+        self.updates.append(kwargs)
+
+    def delete_item(self, **kwargs):
+        self.deletes.append(kwargs)
+
+
+class DataManagementTests(unittest.TestCase):
+    def setUp(self):
+        self.files = ManageFiles()
+        self.s3 = FakeS3()
+        self.worker = FakeLambda()
+        api.files = self.files
+        api.s3 = self.s3
+        api.lambda_client = self.worker
+
+    def test_bulk_tags_parses_signed_oss_url_and_rebuilds_index(self):
+        response = api.handler_bulk_tags(
+            {
+                "body": json.dumps(
+                    {
+                        "urls": ["https://bucket.oss.example/uploads/abc/photo.jpg?signature=x"],
+                        "tags": ["cat"],
+                        "operation": 1,
+                    }
+                )
+            },
+            None,
+        )
+        self.assertEqual(response["statusCode"], 200)
+        self.assertEqual(
+            self.files.updates[0]["ExpressionAttributeValues"][":tags"]["cat"], 1
+        )
+        maintenance = json.loads(self.worker.calls[-1]["Payload"])
+        self.assertEqual(maintenance["action"], "rebuild_index")
+
+    def test_delete_uses_correct_s3_buckets_and_deletes_oss_first(self):
+        response = api.handler_delete_files(
+            {"body": json.dumps({"urls": ["thumbs/abc/thumb.jpg"]})}, None
+        )
+        self.assertEqual(response["statusCode"], 200)
+        self.assertEqual(
+            self.s3.deletes,
+            [
+                {"Bucket": "uploads", "Key": "uploads/abc/photo.jpg"},
+                {"Bucket": "thumbs", "Key": "thumbs/abc/thumb.jpg"},
+            ],
+        )
+        actions = [json.loads(call["Payload"])["action"] for call in self.worker.calls]
+        self.assertEqual(actions, ["delete_objects", "rebuild_index"])
+
+    def test_subscription_has_real_filter_policy(self):
+        calls = []
+        api.sns = type("FakeSns", (), {"subscribe": lambda self, **kwargs: calls.append(kwargs) or {"SubscriptionArn": "pending"}})()
+        response = api.handler_subscribe(
+            {"body": json.dumps({"email": "person@example.com", "tags": ["dingo", "cat"]})},
+            None,
+        )
+        self.assertEqual(response["statusCode"], 200)
+        self.assertEqual(json.loads(calls[0]["Attributes"]["FilterPolicy"]), {"tag": ["cat", "dingo"]})
 
 
 class FakeFiles:
