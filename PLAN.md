@@ -73,7 +73,7 @@ monorepo 目录（frontend/ aws/ aliyun/ docs/ scripts/）、`.gitignore`、`fro
 
 代码在本地编写，通过分阶段脚本发布到云端，之后用户只用浏览器访问云端 URL：
 - `./scripts/deploy-aws.sh` 只负责 AWS 基础设施：Cognito、API Gateway、Lambda×2、S3×5（uploads/thumbs/models/query/web）、DynamoDB×2、SNS、CloudFront。ECR repository/镜像由独立脚本以 `linux/amd64` 单 manifest 构建和推送，不声称由 SAM 重建镜像。
-- `./scripts/deploy-aliyun.sh` = `s deploy` → 在阿里云建：fc-query 函数（HTTP 触发器）+ private OSS 副本桶。
+- `./scripts/deploy-aliyun.sh` 幂等创建 private OSS 副本桶，再用 `s build/deploy` 创建 fc-query FC3 函数和 HTTP 触发器。
 - `./scripts/deploy-frontend.sh` 在 AWS 和阿里云都已输出 URL 后，生成运行时 `config.js`，再 build/sync 到 WebBucket 并通过 CloudFront HTTPS 访问。
 - 本地不保留任何常驻服务；Learner Lab 会话重置后按“ECR → AWS → 模型 → 阿里云 → 前端”顺序重建。
 
@@ -177,7 +177,7 @@ SNS 发布：process-media 对每个不同物种发一条消息，`MessageAttrib
 | 模型上传 | ✅ 完成 | ModelsBucket 已有 `mdv5a.pt` (280767041 B)、`model.pt` (211878007 B)、`pointer.json` (45 B)，指针内容已校验 |
 | private pointer 读取 | ✅ 已部署 | `pipeline.py` 使用 `s3.get_object`；Lambda 已绑定新 digest，待阿里云就绪后做真实媒体冷启动验收 |
 | QueryBucket/query-by-file | ✅ 已部署 | 独立 private 桶+一天过期、显式异步 invoke、QueryJobs 状态、`finally` 删除；本地单测通过 |
-| 阿里云 FC/OSS | ⏳ 待部署 | 修正栈名和 JWT access-token claims，部署后记录 FC URL |
+| 阿里云 FC/OSS | ✅ 已部署 | FC3 `pba-query` + private `pba-oss-copy`；HTTPS URL `https://pba-query-iseukvgnef.cn-hangzhou.fcapp.run`，无/坏 token=401、OPTIONS=204 |
 | OSS 复制/索引/删除 | 🟡 部分完成 | 处理路径已实现原图/缩略图复制及入库后重建索引；待阿里云验收，标签修改/删除路径仍待完成 |
 | 前端基础认证/上传 | 🟡 部分完成 | 已有 signup/signin/guard/upload；待真实 config、Content-Type、轮询和完整错误处理 |
 | Google 外部账号 | ❌ 必须完成 | Cognito Domain/Google IdP/CloudFront HTTPS callback/联邦用户记录 |
@@ -189,8 +189,8 @@ SNS 发布：process-media 对每个不同物种发一条消息，`MessageAttrib
 
 1. **上传模型 ✅**：两个 `.pt` 和 `pointer.json` 已上传 ModelsBucket，对象大小与指针内容已校验。
 2. **修正运行时 P0 ✅**：private pointer SDK 读取、QueryBucket 隔离、QueryJobs/清理、原图/缩略图 OSS 复制与入库索引已实现；ECR 新镜像已按 digest 固定到 Lambda，SAM 更新成功。
-3. **部署阿里云（当前步骤）**：从 `pba` Outputs 注入 Cognito IDs，实现 access-token `client_id/token_use`验证，取得 FC URL。
-4. **完成数据功能**：批量标签、跨云删除、每次变更重建索引、SNS FilterPolicy。
+3. **部署阿里云 ✅**：从 `pba` Outputs 注入 Cognito IDs，FC3 按 access-token `client_id/token_use` 验证，OSS 为 private 且查询结果签发短期 URL。
+4. **完成数据功能（当前步骤）**：批量标签、跨云删除、每次变更重建索引、SNS FilterPolicy。
 5. **完成外部账号**：CloudFront HTTPS → Cognito Domain/Hosted UI → Google OAuth → 回调与 Cognito 联邦记录验收。
 6. **最后部署前端**：用 AWS API URL、Cognito IDs、阿里云 FC URL 生成 `config.js`，build 后上传 WebBucket/CloudFront。
 7. **冒烟测试**：先单图端到端，再执行全部 11 项；任一核心项失败不得标记总体通过。

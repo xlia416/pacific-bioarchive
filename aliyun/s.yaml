@@ -1,51 +1,41 @@
-# Pacific BioArchive — 阿里云侧 Serverless Devs 配置
-# 部署：s deploy（用本机 .env 的阿里云凭证，profile `default`）
-# 功能：fc-query（HTTP 触发器，读 OSS index.json 读副本做查询）+ OSS 副本桶。
-
-edition: 1.0.0
+# Pacific BioArchive — 阿里云 FC 3.0 读路径。
+# Cognito 参数由 scripts/deploy-aliyun.sh 从 AWS Stack Outputs 导出到环境，不写死。
+edition: 3.0.0
 name: pacific-bioarchive
-access: default          # 对应 `s config add -a default` 的 profile
+access: default
 
 vars:
   region: cn-hangzhou
 
-services:
-  fc-query:
-    component: devsapp/fc-http
+resources:
+  fc_query:
+    component: fc3
     props:
       region: ${vars.region}
-      service:
-        name: pba-query
-        description: Pacific BioArchive cross-cloud query read path
-        # 关键：FC 侧读 OSS 副本 + 验 AWS Cognito JWT 的最小权限 RAM 用户
-        role: acs:ram::ACCOUNT_ID:role/AliyunFCFullAccess  # 生产换最小权限，报告说明
-      function:
-        name: index
-        runtime: python3.10
-        handler: index.handler
-        timeout: 60
-        memorySize: 512
-        codeUri: ./fc-query
-        environmentVariables:
-          COGNITO_REGION: us-east-1          # 部署时以真实 UserPoolId/ClientId 覆盖
-          USER_POOL_ID: your-pool-id
-          USER_POOL_CLIENT_ID: your-client-id
-          OSS_BUCKET: pba-oss-copy
-          OSS_ENDPOINT: oss-cn-hangzhou.aliyuncs.com
-          OSS_ACCESS_KEY_ID: ${env.ALIBABA_CLOUD_ACCESS_KEY_ID}
-          OSS_ACCESS_KEY_SECRET: ${env.ALIBABA_CLOUD_ACCESS_KEY_SECRET}
+      functionName: pba-query
+      description: Pacific BioArchive authenticated cross-cloud query read path
+      runtime: python3.10
+      code: ./fc-query
+      handler: index.handler
+      timeout: 60
+      memorySize: 512
+      internetAccess: true
+      environmentVariables:
+        PYTHONPATH: /code/python
+        PATH: /code/python/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/code:/code/bin:/opt:/opt/bin
+        COGNITO_REGION: ${env('COGNITO_REGION')}
+        USER_POOL_ID: ${env('USER_POOL_ID')}
+        USER_POOL_CLIENT_ID: ${env('USER_POOL_CLIENT_ID')}
+        OSS_BUCKET: ${env('OSS_BUCKET')}
+        OSS_ENDPOINT: ${env('OSS_ENDPOINT')}
+        OSS_ACCESS_KEY_ID: ${env('ALIBABA_CLOUD_ACCESS_KEY_ID')}
+        OSS_ACCESS_KEY_SECRET: ${env('ALIBABA_CLOUD_ACCESS_KEY_SECRET')}
       triggers:
-        - name: http
-          type: http
-          config:
-            authType: anonymous      # 认证在函数内对 JWT 校验（401/403），便于演示跨云授权
-            methods: [GET, POST]
-            # 触发路径；如需自定义域名/公网 URL 用 customDomain
-
-  oss-copy:
-    component: devsapp/oss
-    props:
-      region: ${vars.region}
-      bucket: pba-oss-copy
-      acl: public-read          # 副本桶 public-read：稳定 oss_url/thumbnail_oss_url 供规范往返 / 前端直译
-      description: Pacific BioArchive read replica
+        - triggerName: http
+          triggerType: http
+          description: JWT authentication is enforced inside the function
+          qualifier: LATEST
+          triggerConfig:
+            authType: anonymous
+            disableURLInternet: false
+            methods: [GET, POST, OPTIONS]

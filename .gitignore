@@ -19,6 +19,8 @@ venv/
 .aws-sam/
 *.sln
 .samlss/
+.s/
+aliyun/fc-query/python/
 .topic_position
 
 # 本地产物
