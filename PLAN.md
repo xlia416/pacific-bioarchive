@@ -180,7 +180,7 @@ SNS 发布：process-media 对每个不同物种发一条消息，`MessageAttrib
 | 阿里云 FC/OSS | ✅ 已部署 | FC3 `pba-query` + private `pba-oss-copy`；HTTPS URL `https://pba-query-iseukvgnef.cn-hangzhou.fcapp.run`，无/坏 token=401、OPTIONS=204 |
 | OSS 复制/索引/查询/删除 | ✅ 云端端到端 | 批量标签增/删/忽略不存在标签已验收；跨云删除后 AWS/OSS 四个对象、DDB 记录、index 与阿里云查询结果均消失；基准图不受影响 |
 | 本地单元测试 | ✅ 13/13 | `test_aliyun`×4 + `test_p0`×7 + `test_pipeline`×2（视频批量 detector 单次加载、Pillow 缩略图比例） |
-| Git 贡献记录 | 🔴 高风险 | 本次前端完成后本地仍为单一作者且无 remote；Rubric 硬要求全员有 commit——必须建 GitHub 私有库 push，其他成员认领模块提交 |
+| Git 贡献记录 | 🟡 仓库已建立 | 私有仓库 `xlia416/pacific-bioarchive` 已建立并推送；当前仍为单一作者，Rubric 硬要求其他成员以各自账号认领模块并提交 |
 | 前端认证/上传 | ✅ 已部署 | signup/确认/signin/临时密码/guard；预签名 Content-Type、处理轮询、去重和错误提示完整，运行时 config 已注入 |
 | CloudFront HTTPS | ✅ 已部署 | private WebBucket + OAC；SPA 403/404 fallback、API CORS、`/auth/callback` 均已线上验证；URL `https://df3cv9pa7eg7p.cloudfront.net` |
 | Google 外部账号 | 🟡 已启用，待交互验收 | Google IdP 已创建，App Client providers=`COGNITO,Google`，线上按钮和跳转到 `accounts.google.com` 已验证；待演示账号完成一次授权并确认 Cognito 联邦用户记录 |
@@ -197,7 +197,7 @@ SNS 发布：process-media 对每个不同物种发一条消息，`MessageAttrib
 3. **部署阿里云 ✅**：从 `pba` Outputs 注入 Cognito IDs，FC3 按 access-token `client_id/token_use` 验证，OSS 为 private 且查询结果签发短期 URL。
 4. **验证 index.json 写入私有 OSS ✅（08-27 12:00 已完成）**：维护模式调用（不加载模型）返回 200 `{"rebuilt": true}`，`pba-oss-copy/index.json` 已落桶（内容 `[]`，Files 表暂无记录，属预期）；跨云复制链路与 RAM 权限已打通。
 5. **修复 ML 镜像依赖与视频内存 ✅**：禁止 pip 回退到无 `megadetector` namespace 的 5.0.4；解决 ONNX/YOLOv5 protobuf 约束；视频帧批量共用一次 MegaDetector，两模型分阶段驻留；SAM 已绑定 `sha256:d96410a0…`。
-6. **Git 卫生（今天完成）**：建 GitHub 私有库并 push → 其他 3 位成员当天认领各自模块提交。Rubric 硬要求全员 commit，此项拖延到 Day 3 即为丢分项。
+6. **Git 卫生（仓库/push ✅，多人提交待完成）**：私有 GitHub 仓库已建立并跟踪 `origin/main`；其他 3 位成员需以各自账号认领模块提交。Rubric 硬要求全员 commit。
 7. **数据功能、SNS 与视频云端验收 ✅**：真实上传、去重、标签、query-by-file、跨云删除、邮件通知均已通过；10 秒视频按 1 fps 处理 10 帧，3008 MB 限制下峰值 2802 MB并完成跨云查询。
 8. **部署完整前端与 CloudFront ✅**：运行时 `config.js` 注入 AWS API、Cognito、阿里云 FC；完整 Gallery/Query/Tag/Delete/Notification UI 已发布，未登录重定向、SPA fallback、CORS 和无控制台错误已验证。
 9. **激活外部账号（云端配置 ✅，待交互验收）**：Google OAuth Client 已通过本地 `.env` 安全注入 CloudFormation，Cognito Google IdP、App Client provider、CloudFront callback、PKCE/state 和线上按钮均已验证；最后由演示账号完成一次 Google 授权并确认 Cognito 生成联邦用户。
