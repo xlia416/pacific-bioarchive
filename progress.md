@@ -1,10 +1,10 @@
 # Pacific BioArchive 进度记录
 
-> 更新时间:2026-08-27 15:43 左右 · 距截止(08-30 23:55)约 3.5 天
+> 更新时间:2026-08-27 · 距截止(08-30 23:55)约 3.5 天
 
 ## 一句话状态
 
-数据功能云端验收**已通过**：真实上传、去重 409、标签增/删/ignored、query-by-file 隔离清理、跨云删除均成功；`Alectura_lathami_1.JPG` 保留为基准证据；**下一步是 SNS 真实邮件、视频与 Google 外部账号**。
+数据功能和 **SNS 真实邮件云端验收已通过**：真实上传、去重 409、标签增/删/ignored、query-by-file 隔离清理、跨云删除均成功；`Alectura_lathami_1.JPG` 保留为基准证据；**下一步是视频、Google 外部账号与前端**。
 
 ## 已完成(均有云上/本地证据)
 
@@ -56,6 +56,7 @@
 - 单图端到端：AWS/OSS 原图+缩略图、index、有效-token 按标签查询、签名 URL、缩略图反查均实测通过
 - 可删除样本 `Canis_familiaris_3.JPG`：去重=409 且 S3 仍 1 对象；标签增/删/ignored 与 DDB/index/阿里云一致；query-by-file 完成后 Files 表仍 3 条、QueryBucket=0；删除后 AWS/OSS/DDB/index/查询均无该文件
 - FC 依赖已固定为 Python 3.10 运行时兼容组合；OSS 读取失败重试后返回 502，不再静默伪装成空结果
+- SNS 真实邮箱已确认订阅，FilterPolicy 为 `Sus_scrofa`；`Sus_scrofa_1.JPG` 处理为 `Sus_scrofa:1`，CloudWatch 最近窗口记录发布 2、邮件投递 1、失败 0；一次性 Cognito 用户已删除
 
 ### 6. 本地单元测试 11/11 通过 ✅(独立复跑确认)
 
@@ -69,14 +70,15 @@
 
 ## 待办(按优先级)
 
-1. **SNS 云验收**：用真实邮箱确认订阅，再上传相应标签图验证通知邮件。
-2. **Git 风险(评分硬要求)**:目前 11 个 commit **全部单一作者(lxh)**,且**无 remote**。
+1. **Git 风险(评分硬要求)**:本次 SNS 验收记录提交后 12 个 commit **全部单一作者(lxh)**,且**无 remote**。
    需尽快:建/连 GitHub 私有库 → push → 其他 3 位组员按分工提交各自模块
-3. **前端部署**:config.ts 仍是占位符(设计为部署时注入
+2. **视频云验收**：生成 10 秒测试视频，验证 1 fps 抽帧、标签计数和完整视频 URL。
+3. **Google 外部账号**：配置 CloudFront HTTPS、Cognito Domain/Google IdP 与回调，验证联邦用户记录。
+4. **前端部署**:config.ts 仍是占位符(设计为部署时注入
    `public/config.js`)；AWS/Cognito/FC URL 均已取得，待写入运行时配置 → 构建 → sync 到 WebBucket
-4. **端到端冒烟**:单图、去重、query-by-file、标签、删除已通过，待视频与通知;
+5. **端到端冒烟**:单图、去重、query-by-file、标签、删除、通知已通过，待视频;
    smoke-test.sh 目前只有 2 项真实断言,其余 8 项待实现
-5. **交付物**:架构图、用户指南、团队报告(AI 使用声明必写)、演示演练
+6. **交付物**:架构图、用户指南、团队报告(AI 使用声明必写)、演示演练
 
 ## 部署顺序(已定,勿回退)
 
