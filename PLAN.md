@@ -178,8 +178,8 @@ SNS 发布：process-media 对每个不同物种发一条消息，`MessageAttrib
 | private pointer 读取 | ✅ 已部署 | `pipeline.py` 使用 `s3.get_object`；Lambda 已绑定新 digest，待阿里云就绪后做真实媒体冷启动验收 |
 | QueryBucket/query-by-file | ✅ 已部署 | 独立 private 桶+一天过期、显式异步 invoke、QueryJobs 状态、`finally` 删除；本地单测通过 |
 | 阿里云 FC/OSS | ✅ 已部署 | FC3 `pba-query` + private `pba-oss-copy`；HTTPS URL `https://pba-query-iseukvgnef.cn-hangzhou.fcapp.run`，无/坏 token=401、OPTIONS=204 |
-| OSS 复制/索引/删除 | 🟡 部分完成 | 处理路径已实现原图/缩略图复制及入库后重建索引；private 桶已确认，**index.json 写入已验证**（维护调用 200，桶内 `[]` 空数组符合预期）；标签修改/删除路径仍待完成 |
-| 本地单元测试 | ✅ 10/10 | `test_aliyun`×4（token 契约/FC3 handler+CORS/签名 URL）+ `test_p0`×6（签名 URL 解析、删除先清 OSS、FilterPolicy、multipart、查询入队、index 纯净性）；运行：`python3.12 -m unittest discover -s tests`（需 boto3 可导入） |
+| OSS 复制/索引/删除 | 🟡 代码与云维护已验证 | 原图/缩略图复制、跨云删除、标签/删除后重建索引已部署；maintenance 云调用 200 且 private OSS `index.json=[]`，待有效 Cognito token+真实媒体端到端 |
+| 本地单元测试 | ✅ 10/10 | `test_aliyun`×3（token 契约/FC3 handler+CORS/签名 URL）+ `test_p0`×7（标签、删除、FilterPolicy、multipart、查询入队、查询匹配、index 纯净性） |
 | Git 贡献记录 | 🔴 高风险 | 本地 5 个 commit **全部单一作者**、**无 remote**、**6 个文件未提交**（api-handler/process-media app.py、replicate.py、template.yaml、deploy-ecr.sh、test_p0.py）；Rubric 硬要求全员有 commit——今天必须建 GitHub 私有库 push，其他成员认领模块提交 |
 | 前端基础认证/上传 | 🟡 部分完成 | 已有 signup/signin/guard/upload；待真实 config、Content-Type、轮询和完整错误处理 |
 | Google 外部账号 | ❌ 必须完成 | Cognito Domain/Google IdP/CloudFront HTTPS callback/联邦用户记录 |
@@ -194,7 +194,7 @@ SNS 发布：process-media 对每个不同物种发一条消息，`MessageAttrib
 3. **部署阿里云 ✅**：从 `pba` Outputs 注入 Cognito IDs，FC3 按 access-token `client_id/token_use` 验证，OSS 为 private 且查询结果签发短期 URL。
 4. **验证 index.json 写入私有 OSS ✅（08-27 12:00 已完成）**：维护模式调用（不加载模型）返回 200 `{"rebuilt": true}`，`pba-oss-copy/index.json` 已落桶（内容 `[]`，Files 表暂无记录，属预期）；跨云复制链路与 RAM 权限已打通。deploy-ecr.sh 的 buildx 问题已修复并验证（11:29 推送成功、digest 与 Lambda 一致），无需重推。
 5. **Git 卫生（今天完成）**：提交 6 个未提交文件 → 建 GitHub 私有库并 push → 其他 3 位成员当天认领各自模块提交。Rubric 硬要求全员 commit，此项拖延到 Day 3 即为丢分项。
-6. **完成数据功能**：批量标签、跨云删除、每次变更重建索引、SNS FilterPolicy。
+6. **数据功能代码+部署 ✅，云端业务验收待 token**：批量标签、跨云删除、每次变更重建索引、SNS FilterPolicy 已实现；待有效 Cognito access token 调真实 API 及确认 SNS 邮件。
 7. **完成外部账号**：CloudFront HTTPS → Cognito Domain/Hosted UI → Google OAuth → 回调与 Cognito 联邦记录验收。
 8. **最后部署前端**：用 AWS API URL、Cognito IDs、阿里云 FC URL 生成 `config.js`，build 后上传 WebBucket/CloudFront。
 9. **冒烟测试**：先单图端到端，再执行全部 11 项；任一核心项失败不得标记总体通过。
