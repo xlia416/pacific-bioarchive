@@ -70,6 +70,22 @@ class AliyunQueryTests(unittest.TestCase):
         with self.assertRaisesRegex(PermissionError, "token_use"):
             fc.verify_token("Bearer token")
 
+    def test_index_read_failure_is_not_silently_empty(self):
+        class BrokenOss:
+            def get_object(self, key):
+                raise ConnectionError("unavailable")
+
+        old_oss = fc._oss
+        old_sleep = fc.time.sleep
+        try:
+            fc._oss = BrokenOss()
+            fc.time.sleep = lambda _seconds: None
+            with self.assertRaisesRegex(RuntimeError, "OSS index unavailable"):
+                fc.read_index()
+        finally:
+            fc._oss = old_oss
+            fc.time.sleep = old_sleep
+
     def test_query_returns_signed_private_urls(self):
         fc.read_index = lambda: [
             {

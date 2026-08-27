@@ -9,7 +9,9 @@ if [ -f .env ]; then set -a; source .env; set +a; fi
 export AWS_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
 export COGNITO_REGION="$AWS_REGION"
 export OSS_BUCKET="${OSS_BUCKET:-pba-oss-copy}"
-export OSS_ENDPOINT="${OSS_ENDPOINT:-oss-cn-hangzhou.aliyuncs.com}"
+# FC 中 oss2 使用完整 HTTPS endpoint；无 scheme 时 SDK 会退回到 HTTP，
+# 在 FC 运行环境中可能无法读取 private OSS。
+export OSS_ENDPOINT="${OSS_ENDPOINT:-https://oss-cn-hangzhou.aliyuncs.com}"
 
 echo "==> 确保 Serverless Devs 已配置 Alibaba profile"
 s config get -a default >/dev/null 2>&1 || \
@@ -34,6 +36,12 @@ fi
 aliyun oss set-acl "oss://${OSS_BUCKET}" private --bucket --force --region cn-hangzhou >/dev/null
 
 echo "==> 构建 Python 依赖并部署 FC 3.0"
+# python/ 是被 gitignore 排除的生成目录。必须干净重建，否则
+# `pip --upgrade -t` 会残留旧版 dist-info/二进制文件，导致 FC ABI 混用。
+PBA_FC_DEPENDENCY_DIR="$PWD/aliyun/fc-query/python"
+if [ "$PBA_FC_DEPENDENCY_DIR" = "$PWD/aliyun/fc-query/python" ] && [ -d "$PBA_FC_DEPENDENCY_DIR" ]; then
+  rm -rf -- "$PBA_FC_DEPENDENCY_DIR"
+fi
 s fc_query build -t aliyun/s.yaml \
   --custom-args="-i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com"
 s deploy -t aliyun/s.yaml -y

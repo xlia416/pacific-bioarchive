@@ -175,12 +175,12 @@ SNS 发布：process-media 对每个不同物种发一条消息，`MessageAttrib
 | ProcessMedia Lambda 限制适配 | ✅ 完成 | Lab 上限 `MemorySize=3008`，`EphemeralStorage=4096`，`Timeout=900` |
 | Cognito/API Outputs | ✅ 已取得 | UserPool/Client/API URL 由 CloudFormation Outputs 动态读取，不硬编码进仓库 |
 | 模型上传 | ✅ 完成 | ModelsBucket 已有 `mdv5a.pt` (280767041 B)、`model.pt` (211878007 B)、`pointer.json` (45 B)，指针内容已校验 |
-| private pointer 读取 | ✅ 已部署 | `pipeline.py` 使用 `s3.get_object`；Lambda 已绑定新 digest，待真实媒体冷启动验收 |
+| private pointer 读取 | ✅ 云端实测 | `pipeline.py` 使用 `s3.get_object`；首次真实图片处理已从 private ModelsBucket 下载并加载两个模型 |
 | QueryBucket/query-by-file | ✅ 已部署 | 独立 private 桶+一天过期、显式异步 invoke、QueryJobs 状态、`finally` 删除；本地单测通过 |
 | 阿里云 FC/OSS | ✅ 已部署 | FC3 `pba-query` + private `pba-oss-copy`；HTTPS URL `https://pba-query-iseukvgnef.cn-hangzhou.fcapp.run`，无/坏 token=401、OPTIONS=204 |
-| OSS 复制/索引/删除 | 🟡 代码与云维护已验证 | 原图/缩略图复制、跨云删除、标签/删除后重建索引已部署；maintenance 云调用 200 且 private OSS `index.json=[]`，待有效 Cognito token+真实媒体端到端 |
-| 本地单元测试 | ✅ 10/10 | `test_aliyun`×3（token 契约/FC3 handler+CORS/签名 URL）+ `test_p0`×7（标签、删除、FilterPolicy、multipart、查询入队、查询匹配、index 纯净性） |
-| Git 贡献记录 | 🔴 高风险 | 本次修复提交后本地 9 个 commit，仍**全部单一作者**且**无 remote**；Rubric 硬要求全员有 commit——今天必须建 GitHub 私有库 push，其他成员认领模块提交 |
+| OSS 复制/索引/查询 | ✅ 单图云端端到端 | AWS 原图/缩略图与 private OSS 副本均存在；`index.json` 含正确标签；阿里云有效 token 按标签查询、签名 URL 下载、缩略图反查均为 200 |
+| 本地单元测试 | ✅ 11/11 | `test_aliyun`×4（新增 OSS 读失败不得静默返回空表）+ `test_p0`×7 |
+| Git 贡献记录 | 🔴 高风险 | 本次修复提交后本地 10 个 commit，仍**全部单一作者**且**无 remote**；Rubric 硬要求全员有 commit——今天必须建 GitHub 私有库 push，其他成员认领模块提交 |
 | 前端基础认证/上传 | 🟡 部分完成 | 已有 signup/signin/guard/upload；待真实 config、Content-Type、轮询和完整错误处理 |
 | Google 外部账号 | ❌ 必须完成 | Cognito Domain/Google IdP/CloudFront HTTPS callback/联邦用户记录 |
 | Gallery/Query/Tag/Delete/Notification UI | ❌ 待完成 | Rubric 3.2/3.3 的可视化验收界面 |
@@ -195,7 +195,7 @@ SNS 发布：process-media 对每个不同物种发一条消息，`MessageAttrib
 4. **验证 index.json 写入私有 OSS ✅（08-27 12:00 已完成）**：维护模式调用（不加载模型）返回 200 `{"rebuilt": true}`，`pba-oss-copy/index.json` 已落桶（内容 `[]`，Files 表暂无记录，属预期）；跨云复制链路与 RAM 权限已打通。
 5. **修复 ML 镜像依赖 ✅（08-27 15:12 已完成）**：禁止 pip 回退到无 `megadetector` namespace 的 5.0.4；解决 ONNX/YOLOv5 protobuf 约束，构建期 import 门禁通过；真实 `mdv5a.pt` 与 `model.pt` 均已在 linux/amd64 容器加载；SAM 已绑定 `sha256:9cd6cd99…`。
 6. **Git 卫生（今天完成）**：建 GitHub 私有库并 push → 其他 3 位成员当天认领各自模块提交。Rubric 硬要求全员 commit，此项拖延到 Day 3 即为丢分项。
-7. **数据功能代码+部署 ✅，云端业务验收待 token**：批量标签、跨云删除、每次变更重建索引、SNS FilterPolicy 已实现；待有效 Cognito access token 调真实 API 及确认 SNS 邮件。
+7. **数据功能代码+单图端到端 ✅，变更类 API 待验收**：真实图片已通过 Cognito → presign → S3 → ML → DynamoDB/缩略图 → OSS → 阿里云查询；待测批量标签、跨云删除和 SNS 真实邮件。
 8. **完成外部账号**：CloudFront HTTPS → Cognito Domain/Hosted UI → Google OAuth → 回调与 Cognito 联邦记录验收。
 9. **最后部署前端**：用 AWS API URL、Cognito IDs、阿里云 FC URL 生成 `config.js`，build 后上传 WebBucket/CloudFront。
 10. **冒烟测试**：先单图端到端，再执行全部 11 项；任一核心项失败不得标记总体通过。
@@ -218,7 +218,7 @@ SNS 发布：process-media 对每个不同物种发一条消息，`MessageAttrib
 ## 风险与注意
 
 - **Learner Lab 会重置**：所有资源必须进 template.yaml / s.yaml / 脚本，绝不手动建控制台资源。
-- **冷启动** 60–90s（大型镜像+470MB 模型+torch import）：演示前先传一张小图保温。Lab 仅允许 3008MB，必须用短视频和实测确认不 OOM。
+- **冷启动实测 126.5s**（大型镜像+470MB 模型+torch import）：演示前先传一张小图保温。峰值内存 2852/3008MB，余量小；短视频必须单独实测确认不 OOM。
 - **IAM 限制**：只能用 LabRole；报告中说明"细粒度权限"设计（前端零凭证、仅预签名 URL、私有桶+Block Public Access、API 网关 JWT 授权、生产级各函数最小权限策略文档化）。
 - **成本**：目标 $50 内花 <$10；process-media 3008MB×实际推理时间，演示数据集分批测试；阿里云使用 FC+OSS。
 - **megadetector 依赖树**容易冲突：固定版本、用 headless opencv、本地 `docker run` 先验证镜像再推。

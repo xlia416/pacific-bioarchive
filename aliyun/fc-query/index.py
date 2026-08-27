@@ -35,12 +35,24 @@ def _oss_bucket():
 
 
 def read_index():
-    """读 OSS index.json（读副本）。失败回退空表。"""
-    try:
-        data = _oss_bucket().get_object("index.json").read()
-        return json.loads(data)
-    except Exception:
-        return []
+    """读 OSS index.json（读副本）。
+
+    读取失败不能回退为空表，否则权限/网络/格式错误会被伪装成
+    “查询无结果”。对短暂 OSS 错误重试后将异常交给 HTTP 层返回 502。
+    """
+    last_error = None
+    for attempt in range(3):
+        try:
+            data = _oss_bucket().get_object("index.json").read()
+            index = json.loads(data)
+            if not isinstance(index, list):
+                raise ValueError("OSS index must be a JSON array")
+            return index
+        except Exception as exc:
+            last_error = exc
+            if attempt < 2:
+                time.sleep(0.2 * (attempt + 1))
+    raise RuntimeError("OSS index unavailable") from last_error
 
 
 def _signed_url(key):
@@ -175,12 +187,18 @@ def handler(event, context):
                 raise ValueError("body must be an object")
         except Exception:
             return _respond(400, {"error": "invalid JSON tag conditions"})
-        results = query_by_tags(body)          # {"tag": count|null, ...}
+        try:
+            results = query_by_tags(body)      # {"tag": count|null, ...}
+        except RuntimeError:
+            return _respond(502, {"error": "OSS index unavailable"})
         return _respond(200, {"owner": claims.get("sub"), "results": results})
 
     if method == "GET" and path.startswith("/query/by-thumbnail"):
         thumb = unquote((request.get("queryParameters") or {}).get("url", ""))
-        found = query_by_thumbnail(thumb)
+        try:
+            found = query_by_thumbnail(thumb)
+        except RuntimeError:
+            return _respond(502, {"error": "OSS index unavailable"})
         if not found:
             return _respond(404, {"error": "not found"})
         return _respond(200, found)

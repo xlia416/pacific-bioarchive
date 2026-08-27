@@ -1,10 +1,10 @@
 # Pacific BioArchive 进度记录
 
-> 更新时间:2026-08-27 15:12 左右 · 距截止(08-30 23:55)约 3.5 天
+> 更新时间:2026-08-27 15:32 左右 · 距截止(08-30 23:55)约 3.5 天
 
 ## 一句话状态
 
-ML 依赖镜像**已修复并重新部署**；真实 `mdv5a.pt`/`model.pt` 容器加载成功，Lambda 已绑定新 digest，maintenance=200，本地单测 10/10；**下一步是有效 Cognito access token 数据 API 验收和真实图片端到端**。
+真实单图端到端**已通过**：Cognito/presign/S3/ML/DynamoDB/缩略图/OSS/阿里云查询均成功，`Alectura_lathami_1.JPG` 正确识别为 `Alectura_lathami:1`；本地单测 11/11；**下一步是批量标签/删除/SNS 云验收**。
 
 ## 已完成(均有云上/本地证据)
 
@@ -51,30 +51,31 @@ ML 依赖镜像**已修复并重新部署**；真实 `mdv5a.pt`/`model.pt` 容�
 - FC3 `pba-query`: `https://pba-query-iseukvgnef.cn-hangzhou.fcapp.run`
 - private `pba-oss-copy`: ACL 已确认为 `private`
 - 无 token=401，坏 token=401，CORS OPTIONS=204
-- ProcessMedia maintenance `rebuild_index`=200，OSS `index.json=[]`
+- ProcessMedia maintenance `rebuild_index`=200；上传后 OSS `index.json` 含 1 条正确媒体记录
 - 批量标签后刷新索引、跨云删除、SNS FilterPolicy 已实现并部署
+- 单图端到端：AWS/OSS 原图+缩略图、index、有效-token 按标签查询、签名 URL、缩略图反查均实测通过
+- FC 依赖已固定为 Python 3.10 运行时兼容组合；OSS 读取失败重试后返回 502，不再静默伪装成空结果
 
-### 6. 本地单元测试 10/10 通过 ✅(独立复跑确认)
+### 6. 本地单元测试 11/11 通过 ✅(独立复跑确认)
 
-- test_aliyun × 3:access-token 契约、FC3 HTTP handler+CORS、查询返回私有桶签名 URL
+- test_aliyun × 4:access-token 契约、FC3 HTTP handler+CORS、签名 URL、OSS 读失败不得静默返回空表
 - test_p0 × 7:bulk-tags、跨云删除、FilterPolicy、multipart、查询入队/匹配、index 只含 processed
 - 运行方式:`python3.12 -m unittest discover -s tests`(需 boto3 可导入,用临时 venv 即可)
 
-### 7. Git 本地提交 9 个
+### 7. Git 本地提交 10 个
 
-本次镜像修复提交后共 9 个。仍只有 `lxh` 一位作者，且未配置 remote。
+本次单图端到端与 FC 依赖修复提交后共 10 个。仍只有 `lxh` 一位作者，且未配置 remote。
 
 ## 待办(按优先级)
 
-1. **有效 Cognito token 数据 API 云端验收**：bulk tag → 删标签 → 删不存在标签 → 删文件；SNS 需真实邮箱确认。
-2. **真实媒体端到端**：小图上传 → 私有模型冷启动 → 标签/缩略图 → OSS 副本 → 阿里云查询。
-3. **Git 风险(评分硬要求)**:目前 9 个 commit **全部单一作者(lxh)**,且**无 remote**。
+1. **数据变更云验收**：批量标签 → 删标签 → 删不存在标签 → 跨云删文件；SNS 需真实邮箱确认。
+2. **Git 风险(评分硬要求)**:目前 10 个 commit **全部单一作者(lxh)**,且**无 remote**。
    需尽快:建/连 GitHub 私有库 → push → 其他 3 位组员按分工提交各自模块
-4. **前端部署**:config.ts 仍是占位符(设计为部署时注入
+3. **前端部署**:config.ts 仍是占位符(设计为部署时注入
    `public/config.js`)；AWS/Cognito/FC URL 均已取得，待写入运行时配置 → 构建 → sync 到 WebBucket
-5. **端到端冒烟**:真实图片上传 → ML 打标 → 缩略图 → OSS 复制 → 查询 → 删除;
+4. **端到端冒烟**:单图上传/查询已通过，待去重、query-by-file、标签、删除、视频与通知;
    smoke-test.sh 目前只有 2 项真实断言,其余 8 项待实现
-6. **交付物**:架构图、用户指南、团队报告(AI 使用声明必写)、演示演练
+5. **交付物**:架构图、用户指南、团队报告(AI 使用声明必写)、演示演练
 
 ## 部署顺序(已定,勿回退)
 
