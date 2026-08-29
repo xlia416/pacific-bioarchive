@@ -43,14 +43,14 @@ export function SignUpPage() {
             <input placeholder="姓" value={form.familyName} onChange={(e) => setForm({ ...form, familyName: e.target.value })} required />
             <input type="password" placeholder="密码" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required />
             {error && <div className="error">{error}</div>}
-            <button type="submit">注册</button>
+            <button className="full" type="submit">注册</button>
           </form>
         ) : (
           <form onSubmit={confirm}>
             <p className="muted">验证码已发到 {form.email}</p>
             <input placeholder="6 位验证码" value={code} onChange={(e) => setCode(e.target.value)} required />
             {error && <div className="error">{error}</div>}
-            <button type="submit">确认注册</button>
+            <button className="full" type="submit">确认注册</button>
           </form>
         )}
         <p className="muted">

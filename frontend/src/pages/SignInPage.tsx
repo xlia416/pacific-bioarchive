@@ -42,14 +42,14 @@ export function SignInPage() {
             <input placeholder="邮箱" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
             <input type="password" placeholder="密码" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required />
             {error && <div className="error">{error}</div>}
-            <button type="submit">登录</button>
+            <button className="full" type="submit">登录</button>
           </form>
         ) : (
           <form onSubmit={forceReset}>
             <p className="muted">首次登录需设置新密码</p>
             <input type="password" placeholder="新密码" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} required />
             {error && <div className="error">{error}</div>}
-            <button type="submit">设置密码</button>
+            <button className="full" type="submit">设置密码</button>
           </form>
         )}
         <p className="muted">

@@ -50,7 +50,7 @@ export function UploadPanel({ onComplete }: { onComplete?: () => void }) {
   };
 
   return (
-    <section className="card">
+    <section className="card upload-panel">
       <h2>上传媒体</h2>
       <p className="muted">支持图片与视频；上传后自动去重、识别物种、生成缩略图。</p>
       <label className="dropzone">
