@@ -82,7 +82,7 @@ export function signIn(username: string, password: string, onNewPasswordRequired
 
 export function completeNewPassword(newPassword: string) {
   return new Promise<CognitoUserSession>((resolve, reject) => {
-    if (!challengedUser) return reject(new Error('没有待完成的改密挑战，请重新登录'));
+    if (!challengedUser) return reject(new Error('No password challenge is active. Please sign in again.'));
     challengedUser.completeNewPasswordChallenge(newPassword, {}, {
       onSuccess: (session) => { challengedUser = null; resolve(session); },
       onFailure: reject,
@@ -97,7 +97,7 @@ function base64Url(bytes: Uint8Array) {
 }
 
 export async function startGoogleSignIn() {
-  if (!config.COGNITO_DOMAIN || !config.GOOGLE_IDP_ENABLED) throw new Error('Google 登录尚未配置');
+  if (!config.COGNITO_DOMAIN || !config.GOOGLE_IDP_ENABLED) throw new Error('Google sign-in is not configured.');
   const verifier = base64Url(crypto.getRandomValues(new Uint8Array(48)));
   const state = base64Url(crypto.getRandomValues(new Uint8Array(24)));
   const challenge = base64Url(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))));
@@ -114,8 +114,8 @@ export async function startGoogleSignIn() {
 export async function completeOAuthCallback(code: string, returnedState: string | null) {
   const verifier = sessionStorage.getItem(OAUTH_CODE_VERIFIER);
   const expectedState = sessionStorage.getItem(OAUTH_STATE);
-  if (!verifier) throw new Error('OAuth PKCE verifier 不存在，请重新发起登录');
-  if (!returnedState || !expectedState || returnedState !== expectedState) throw new Error('OAuth state 校验失败，请重新发起登录');
+  if (!verifier) throw new Error('The OAuth session has expired. Please start sign-in again.');
+  if (!returnedState || !expectedState || returnedState !== expectedState) throw new Error('OAuth state validation failed. Please start sign-in again.');
   const response = await fetch(`${config.COGNITO_DOMAIN}/oauth2/token`, {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ grant_type: 'authorization_code', client_id: config.USER_POOL_CLIENT_ID,

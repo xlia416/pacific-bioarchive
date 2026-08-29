@@ -101,6 +101,27 @@ class AliyunQueryTests(unittest.TestCase):
         self.assertIn("?signed=yes", result[0]["url"])
         self.assertIn("uploads/abc/photo.jpg", result[0]["full_url"])
 
+    def test_thumbnail_query_validates_host_and_returns_fresh_urls(self):
+        checksum = "a" * 64
+        fc.read_index = lambda: [
+            {
+                "checksum": checksum,
+                "file_type": "image",
+                "tags": {"dingo": 1},
+                "oss_key": f"uploads/{checksum}/photo.jpg",
+                "thumbnail_oss_key": f"thumbs/{checksum}/thumb.jpg",
+            }
+        ]
+        supplied = f"https://private-bucket.oss.example.com/thumbs/{checksum}/thumb.jpg?expired=yes"
+        result = fc.query_by_thumbnail(supplied)
+        self.assertIn("?signed=yes", result["url"])
+        self.assertIn("uploads/", result["full_url"])
+
+        with self.assertRaisesRegex(ValueError, "OSS host"):
+            fc.query_by_thumbnail(f"https://attacker.example/thumbs/{checksum}/thumb.jpg")
+        with self.assertRaisesRegex(ValueError, "object path"):
+            fc.query_by_thumbnail("https://private-bucket.oss.example.com/not-a-thumbnail.jpg")
+
     def test_fc3_http_handler_and_cors(self):
         fc.verify_token = lambda header: {"sub": "user-1"}
         original_query = fc.query_by_tags

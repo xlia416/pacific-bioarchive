@@ -19,7 +19,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     };
   }, [location]);
 
-  if (authed === null) return <div className="splash">加载中…</div>;
+  if (authed === null) return <div className="splash"><span className="spinner" /> Checking your session…</div>;
   if (!authed) return <Navigate to="/signup" replace />;
   return <>{children}</>;
 }

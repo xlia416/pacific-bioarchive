@@ -16,7 +16,7 @@ export function SignUpPage() {
       await signUp(form.email, form.password, form.givenName, form.familyName);
       setNeedsCode(true);
     } catch (err: any) {
-      setError(err?.message ?? '注册失败');
+      setError(err?.message ?? 'Registration failed');
     }
   };
 
@@ -27,7 +27,7 @@ export function SignUpPage() {
       await confirmSignUp(form.email, code);
       navigate('/signin');
     } catch (err: any) {
-      setError(err?.message ?? '验证失败');
+      setError(err?.message ?? 'Verification failed');
     }
   };
 
@@ -35,26 +35,26 @@ export function SignUpPage() {
     <div className="auth-wrap">
       <div className="card">
         <h1>Pacific BioArchive</h1>
-        <p className="muted">注册以使用 ✔（未登录访问将重定向到这里）</p>
+        <p className="muted">Create an account to access the protected wildlife archive.</p>
         {!needsCode ? (
           <form onSubmit={submit}>
-            <input placeholder="邮箱" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
-            <input placeholder="名" value={form.givenName} onChange={(e) => setForm({ ...form, givenName: e.target.value })} required />
-            <input placeholder="姓" value={form.familyName} onChange={(e) => setForm({ ...form, familyName: e.target.value })} required />
-            <input type="password" placeholder="密码" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required />
+            <input placeholder="Email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
+            <input placeholder="Given name" value={form.givenName} onChange={(e) => setForm({ ...form, givenName: e.target.value })} required />
+            <input placeholder="Family name" value={form.familyName} onChange={(e) => setForm({ ...form, familyName: e.target.value })} required />
+            <input type="password" placeholder="Password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required />
             {error && <div className="error">{error}</div>}
-            <button className="full" type="submit">注册</button>
+            <button className="full" type="submit">Create account</button>
           </form>
         ) : (
           <form onSubmit={confirm}>
-            <p className="muted">验证码已发到 {form.email}</p>
-            <input placeholder="6 位验证码" value={code} onChange={(e) => setCode(e.target.value)} required />
+            <p className="muted">We sent a verification code to {form.email}</p>
+            <input placeholder="6-digit verification code" value={code} onChange={(e) => setCode(e.target.value)} required />
             {error && <div className="error">{error}</div>}
-            <button className="full" type="submit">确认注册</button>
+            <button className="full" type="submit">Verify account</button>
           </form>
         )}
         <p className="muted">
-          已有账号？<Link to="/signin">去登录</Link>
+          Already registered? <Link to="/signin">Sign in</Link>
         </p>
       </div>
     </div>

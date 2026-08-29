@@ -63,24 +63,25 @@
 - 视频端到端：10 秒 H.264/1280×960 按 1 fps 处理 10 帧，标签 `Sus_scrofa:10` 及低阈值误报 `Bos_taurus:1`；S3/OSS 视频与 300×225 JPEG 缩略图、DDB/index、FC `Sus_scrofa>=10` 查询和签名 URL 均通过
 - 视频冷启动日志：10 帧、MegaDetector 加载 1 次、SpeciesNet 加载 1 次，126.3 s，`Max Memory Used=2802/3008 MB`，无 OOM/超时
 
-### 6. 本地单元测试 13/13 通过 ✅(独立复跑确认)
+### 6. 本地单元测试 14 项 ✅
 
-- test_aliyun × 4:access-token 契约、FC3 HTTP handler+CORS、签名 URL、OSS 读失败不得静默返回空表
+- test_aliyun × 5:access-token 契约、FC3 HTTP handler+CORS、签名 URL、OSS 读失败不得静默返回空表、缩略图 OSS host/key 严格校验（本次 5/5 复跑通过）
 - test_p0 × 7:bulk-tags、跨云删除、FilterPolicy、multipart、查询入队/匹配、index 只含 processed
 - test_pipeline × 2:10 帧共用一次 detector 调用并释放分类器、Pillow 缩略图保持宽高比
-- 运行方式:`python3.12 -m unittest discover -s tests`(需 boto3 可导入,用临时 venv 即可)
+- 运行方式:`python3.12 -m unittest discover -s tests`(全量需 boto3/Pillow 可导入；当前全局 Python 缺这两项，本次按范围复跑 `test_aliyun` 5/5)
 
 ### 7. Git 与云端前端
 
 - 私有仓库 `xlia416/pacific-bioarchive` 已建立，`main` 已推送并跟踪 `origin/main`
 - 当前 17 个 commit，仍只有 `lxh` 一位作者；其他成员提交仍是 rubric 风险
 - CloudFront HTTPS、完整功能 UI、Cognito Google IdP 已部署；Google 登录按钮与跳转已验证，待真实账号完成一次授权并确认联邦用户记录
+- 08-30 交互修正已部署：全站用户可见文案改为英文；上传显示 checksum/上传百分比/ML 处理状态；预览与查询失败有明确反馈。缩略图反查不再直接渲染用户输入 URL，FC 严格校验 HTTPS OSS host + `thumbs/<sha256>/thumb.jpg`，命中后返回新签名缩略图/原图 URL，错误主机/路径=400、不存在=404。
 
 ## 待办(按优先级)
 
 1. **Git 风险(评分硬要求)**：仓库和 remote 已完成，但 17 个 commit 仍全部为单一作者；其他 3 位组员需按分工提交各自模块。
 2. **Google 外部账号最终验收**：用真实 Google 账号完成授权，确认 Cognito `Google_...` 联邦用户及 AWS/阿里云 access-token 调用。
-3. **前端交互验收**：完整 UI 已部署；需通过页面走完上传、query-by-file、缩略图反查、标签、删除和通知并留证据。
+3. **前端交互验收**：英文 UI、加载/失败状态与严格缩略图反查已部署；需通过页面走完上传、query-by-file、缩略图反查、标签、删除和通知并留证据。
 4. **端到端冒烟**:单图、去重、query-by-file、标签、删除、通知、视频已通过；
    smoke-test.sh 目前只有 2 项真实断言,其余 8 项待实现
 5. **交付物**:架构图、用户指南、团队报告(AI 使用声明必写)、演示演练

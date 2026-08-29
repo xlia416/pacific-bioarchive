@@ -17,7 +17,7 @@ export function SignInPage() {
       await signIn(form.email, form.password, () => setChallenge(true));
       navigate('/');
     } catch (err: any) {
-      setError(err?.message ?? '登录失败');
+      setError(err?.message ?? 'Sign in failed');
     }
   };
 
@@ -29,36 +29,36 @@ export function SignInPage() {
       setChallenge(false);
       navigate('/');
     } catch (err: any) {
-      setError(err?.message ?? '改密失败');
+      setError(err?.message ?? 'Password update failed');
     }
   };
 
   return (
     <div className="auth-wrap">
       <div className="card">
-        <h1>登录</h1>
+        <h1>Sign in</h1>
         {!challenge ? (
           <form onSubmit={submit}>
-            <input placeholder="邮箱" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
-            <input type="password" placeholder="密码" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required />
+            <input placeholder="Email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
+            <input type="password" placeholder="Password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required />
             {error && <div className="error">{error}</div>}
-            <button className="full" type="submit">登录</button>
+            <button className="full" type="submit">Sign in</button>
           </form>
         ) : (
           <form onSubmit={forceReset}>
-            <p className="muted">首次登录需设置新密码</p>
-            <input type="password" placeholder="新密码" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} required />
+            <p className="muted">Set a new password to complete your first sign-in.</p>
+            <input type="password" placeholder="New password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} required />
             {error && <div className="error">{error}</div>}
-            <button className="full" type="submit">设置密码</button>
+            <button className="full" type="submit">Set password</button>
           </form>
         )}
         <p className="muted">
-          还没账号？<Link to="/signup">去注册</Link>
+          New here? <Link to="/signup">Create an account</Link>
         </p>
         {config.GOOGLE_IDP_ENABLED && <>
-          <div className="divider"><span>或</span></div>
+          <div className="divider"><span>or</span></div>
           <button className="secondary full" type="button" onClick={() => void startGoogleSignIn().catch((err) => setError(err.message))}>
-            使用 Google 登录
+            Continue with Google
           </button>
         </>}
       </div>

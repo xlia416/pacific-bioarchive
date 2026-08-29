@@ -53,6 +53,22 @@ export async function sha256(file: File | Blob): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+export function uploadToPresignedUrl(url: string, file: File, contentType: string, onProgress: (percent: number) => void) {
+  return new Promise<void>((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open('PUT', url);
+    request.setRequestHeader('Content-Type', contentType);
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100));
+    };
+    request.onerror = () => reject(new Error('Network error while uploading to S3'));
+    request.onload = () => request.status >= 200 && request.status < 300
+      ? resolve()
+      : reject(new Error(`S3 upload failed: ${request.status}`));
+    request.send(file);
+  });
+}
+
 export const api = {
   async presignUpload(opts: { filename: string; checksum: string; contentType: string }) {
     const response = await authedFetch('/upload/presign', {

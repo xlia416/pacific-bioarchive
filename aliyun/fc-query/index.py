@@ -4,6 +4,7 @@
 
 import os
 import json
+import re
 import time
 from urllib.parse import unquote, urlparse
 
@@ -70,6 +71,23 @@ def _canonical_key(value):
     if path.startswith(f"{OSS_BUCKET}/"):
         path = path[len(OSS_BUCKET) + 1:]
     return path
+
+
+def _thumbnail_key_from_url(value):
+    """Validate the OSS host and thumbnail path while ignoring expiring signatures."""
+    try:
+        parsed = urlparse(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid thumbnail URL") from exc
+    endpoint = OSS_ENDPOINT if "://" in OSS_ENDPOINT else f"https://{OSS_ENDPOINT}"
+    endpoint_host = urlparse(endpoint).hostname
+    expected_host = f"{OSS_BUCKET}.{endpoint_host}" if endpoint_host else ""
+    if parsed.scheme != "https" or not parsed.hostname or parsed.hostname.lower() != expected_host.lower():
+        raise ValueError("thumbnail URL must use this application's OSS host")
+    key = _canonical_key(value)
+    if not re.fullmatch(r"thumbs/[0-9a-fA-F]{64}/thumb\.jpg", key):
+        raise ValueError("invalid thumbnail object path")
+    return key
 
 
 # ---------- JWKS / JWT 验证（跨云） ----------
@@ -144,14 +162,17 @@ def query_by_tags(conditions):
 
 
 def query_by_thumbnail(thumb_url):
-    requested_key = _canonical_key(thumb_url)
+    requested_key = _thumbnail_key_from_url(thumb_url)
     index = read_index()
     for it in index:
         stored_key = it.get("thumbnail_oss_key") or _canonical_key(it.get("thumbnail_oss_url"))
         if stored_key == requested_key:
             return {
                 "checksum": it.get("checksum"),
+                "url": _signed_url(stored_key),
+                "thumbnail_oss_url": _signed_url(stored_key),
                 "full_url": _signed_url(it.get("oss_key")),
+                "tags": it.get("tags", {}),
                 "file_type": it.get("file_type"),
             }
     return None
@@ -197,6 +218,8 @@ def handler(event, context):
         thumb = unquote((request.get("queryParameters") or {}).get("url", ""))
         try:
             found = query_by_thumbnail(thumb)
+        except ValueError as exc:
+            return _respond(400, {"error": str(exc)})
         except RuntimeError:
             return _respond(502, {"error": "OSS index unavailable"})
         if not found:
