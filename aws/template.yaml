@@ -324,6 +324,7 @@ Resources:
         AllowHeaders:
           - content-type
           - authorization
+          - x-filename
         AllowMethods:
           - GET
           - POST
