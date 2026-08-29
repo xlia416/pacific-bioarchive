@@ -1,10 +1,10 @@
 # Pacific BioArchive 进度记录
 
-> 更新时间:2026-08-27 · 距截止(08-30 23:55)约 3.5 天
+> 更新时间:2026-08-30
 
 ## 一句话状态
 
-数据功能、**SNS 真实邮件和视频 1 fps 云端验收已通过**；10 秒视频在 3008 MB 限制下峰值 2802 MB，AWS/OSS/FC 端到端成功；**下一步是 Google 外部账号与前端**。
+数据功能、SNS、视频 1 fps、完整前端、CloudFront 和 Google IdP 均已部署；query-by-file 的 `X-Filename` CORS 问题已修复并通过线上预检。当前重点是完整 smoke test、Google 交互验收和报告/多人贡献记录。
 
 ## 已完成(均有云上/本地证据)
 
@@ -15,7 +15,7 @@
 | API | https://o5g9c7rcac.execute-api.us-east-1.amazonaws.com |
 | Cognito UserPool | us-east-1_FHAyKPNrs |
 | Client ID | 2irism5thu55d8rp9b7aal5n4k |
-| Web 静态站 | http://pba-web-987040391588.s3-website-us-east-1.amazonaws.com |
+| Web 前端 | https://df3cv9pa7eg7p.cloudfront.net |
 | 桶 | pba-uploads / thumbs / models / query / web(均 987040391588 后缀) |
 
 ### 2. P0 修订全部落地 ✅
@@ -28,6 +28,7 @@
 - `pipeline.py` pointer.json 改 `s3.get_object`(私有桶,原公网 URL 会 403)
 - `replicate.py` 补上真正的文件+缩略图 OSS 复制(原来只写 index.json,oss_url 全是死链)
 - OSS 设计变更:**桶 private + 签名 URL**(放弃原 public-read;签名 URL 往返按规范化 key 匹配)
+- API Gateway CORS `AllowHeaders` 加入 `x-filename`：修复浏览器 query-by-file 请求因预检被拦截而显示 `Failed to fetch`；线上 OPTIONS 已返回 `access-control-allow-headers: authorization,content-type,x-filename`（commit `fa260db`）
 
 ### 3. 模型已上传 ✅(10:42–10:45)
 
@@ -69,17 +70,17 @@
 - test_pipeline × 2:10 帧共用一次 detector 调用并释放分类器、Pillow 缩略图保持宽高比
 - 运行方式:`python3.12 -m unittest discover -s tests`(需 boto3 可导入,用临时 venv 即可)
 
-### 7. Git 本地提交 13 个（本次提交后）
+### 7. Git 与云端前端
 
-仍只有 `lxh` 一位作者，且未配置 remote。
+- 私有仓库 `xlia416/pacific-bioarchive` 已建立，`main` 已推送并跟踪 `origin/main`
+- 当前 17 个 commit，仍只有 `lxh` 一位作者；其他成员提交仍是 rubric 风险
+- CloudFront HTTPS、完整功能 UI、Cognito Google IdP 已部署；Google 登录按钮与跳转已验证，待真实账号完成一次授权并确认联邦用户记录
 
 ## 待办(按优先级)
 
-1. **Git 风险(评分硬要求)**:本次提交后 13 个 commit **全部单一作者(lxh)**,且**无 remote**。
-   需尽快:建/连 GitHub 私有库 → push → 其他 3 位组员按分工提交各自模块
-2. **Google 外部账号**：配置 CloudFront HTTPS、Cognito Domain/Google IdP 与回调，验证联邦用户记录。
-3. **前端部署**:config.ts 仍是占位符(设计为部署时注入
-   `public/config.js`)；AWS/Cognito/FC URL 均已取得，待写入运行时配置 → 构建 → sync 到 WebBucket
+1. **Git 风险(评分硬要求)**：仓库和 remote 已完成，但 17 个 commit 仍全部为单一作者；其他 3 位组员需按分工提交各自模块。
+2. **Google 外部账号最终验收**：用真实 Google 账号完成授权，确认 Cognito `Google_...` 联邦用户及 AWS/阿里云 access-token 调用。
+3. **前端交互验收**：完整 UI 已部署；需通过页面走完上传、query-by-file、缩略图反查、标签、删除和通知并留证据。
 4. **端到端冒烟**:单图、去重、query-by-file、标签、删除、通知、视频已通过；
    smoke-test.sh 目前只有 2 项真实断言,其余 8 项待实现
 5. **交付物**:架构图、用户指南、团队报告(AI 使用声明必写)、演示演练

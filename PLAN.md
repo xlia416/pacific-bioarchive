@@ -187,6 +187,7 @@ SNS 发布：process-media 对每个不同物种发一条消息，`MessageAttrib
 | SNS 真实邮件通知 | ✅ 云端实测 | QQ 邮箱订阅并确认 `Sus_scrofa` FilterPolicy；上传 `Sus_scrofa_1.JPG` 识别为 `Sus_scrofa:1`，CloudWatch 显示邮件投递 1、失败 0 |
 | 视频 1 fps | ✅ 云端端到端 | 10 秒 H.264 抽取/处理 10 帧，`Sus_scrofa:10`；S3/OSS 原视频+缩略图、DDB/index、FC 计数查询和签名 URL 均通过 |
 | Gallery/Query/Tag/Delete/Notification UI | ✅ 已部署 | 私有 OSS 签名媒体 Gallery、四种查询、批量标签、跨云删除和 SNS 订阅页面已构建并发布 |
+| query-by-file 浏览器 CORS | ✅ 已修复并部署 | API `AllowHeaders` 已加入 `x-filename`；CloudFront origin 的真实 OPTIONS 返回 204，并明确允许 `authorization,content-type,x-filename`（commit `fa260db`） |
 | Smoke test | ❌ 待完成 | 当前仅骨架，必须实现下方 11 项可重复测试 |
 | 报告/架构图/用户指南 | ❌ 待完成 | 官方云图标、贡献表、私有仓库链接、GenAI 声明 |
 
@@ -199,7 +200,7 @@ SNS 发布：process-media 对每个不同物种发一条消息，`MessageAttrib
 5. **修复 ML 镜像依赖与视频内存 ✅**：禁止 pip 回退到无 `megadetector` namespace 的 5.0.4；解决 ONNX/YOLOv5 protobuf 约束；视频帧批量共用一次 MegaDetector，两模型分阶段驻留；SAM 已绑定 `sha256:d96410a0…`。
 6. **Git 卫生（仓库/push ✅，多人提交待完成）**：私有 GitHub 仓库已建立并跟踪 `origin/main`；其他 3 位成员需以各自账号认领模块提交。Rubric 硬要求全员 commit。
 7. **数据功能、SNS 与视频云端验收 ✅**：真实上传、去重、标签、query-by-file、跨云删除、邮件通知均已通过；10 秒视频按 1 fps 处理 10 帧，3008 MB 限制下峰值 2802 MB并完成跨云查询。
-8. **部署完整前端与 CloudFront ✅**：运行时 `config.js` 注入 AWS API、Cognito、阿里云 FC；完整 Gallery/Query/Tag/Delete/Notification UI 已发布，未登录重定向、SPA fallback、CORS 和无控制台错误已验证。
+8. **部署完整前端与 CloudFront ✅**：运行时 `config.js` 注入 AWS API、Cognito、阿里云 FC；完整 Gallery/Query/Tag/Delete/Notification UI 已发布，未登录重定向和 SPA fallback 已验证；query-by-file 所需 `X-Filename` 已加入 CORS 白名单，真实预检通过。
 9. **激活外部账号（云端配置 ✅，待交互验收）**：Google OAuth Client 已通过本地 `.env` 安全注入 CloudFormation，Cognito Google IdP、App Client provider、CloudFront callback、PKCE/state 和线上按钮均已验证；最后由演示账号完成一次 Google 授权并确认 Cognito 生成联邦用户。
 10. **冒烟测试**：先单图端到端，再执行全部 11 项；任一核心项失败不得标记总体通过。
 11. **交付物与演示**：完成报告/架构图/用户指南/个人报告，确保全员 commit，按作业上限准备 3 分钟架构讲解和 15 分钟演示。
