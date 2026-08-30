@@ -41,7 +41,7 @@
 - 固定 `onnx==1.22.0`/`onnx2torch==1.5.15`/`protobuf==4.25.8`，只豁免 YOLOv5 对 protobuf 的过严元数据约束
 - 构建期关键 import 通过；真实 `model.pt` 反序列化成功，真实 `mdv5a.pt` 733 层模型加载成功
 - 修正 MegaDetector 10.x `load_and_run_detector_batch` 为全关键字参数调用
-- 视频修复后最终 ECR digest `sha256:d96410a0f43c1f746142334487e97a8c82ccacd66ed2b713a37bb52941cdabae`
+- 通知链接修复后最新 ECR digest `sha256:1c056eb6992d2085d52c842c1d9d2258609698377ba671edadbb046a357c38dc`
 - 10 帧只加载一次 MegaDetector；MegaDetector 与 SpeciesNet 分阶段驻留，分类结束后释放内存
 - 缩略图改用 Pillow，修复 Lambda 中 `cv2.imwrite` 参数兼容错误
 - Lambda 状态 `Active`/`Successful`，绑定 digest **= ECR latest digest** ✅
@@ -59,16 +59,16 @@
 - 单图端到端：AWS/OSS 原图+缩略图、index、有效-token 按标签查询、签名 URL、缩略图反查均实测通过
 - 可删除样本 `Canis_familiaris_3.JPG`：去重=409 且 S3 仍 1 对象；标签增/删/ignored 与 DDB/index/阿里云一致；query-by-file 完成后 Files 表仍 3 条、QueryBucket=0；删除后 AWS/OSS/DDB/index/查询均无该文件
 - FC 依赖已固定为 Python 3.10 运行时兼容组合；OSS 读取失败重试后返回 502，不再静默伪装成空结果
-- SNS 真实邮箱已确认订阅，FilterPolicy 为 `Sus_scrofa`；`Sus_scrofa_1.JPG` 处理为 `Sus_scrofa:1`，CloudWatch 最近窗口记录发布 2、邮件投递 1、失败 0；一次性 Cognito 用户已删除
+- SNS 真实邮箱已确认订阅，FilterPolicy 为 `Sus_scrofa`；`Sus_scrofa_1.JPG` 处理为 `Sus_scrofa:1`，CloudWatch 最近窗口记录发布 2、邮件投递 1、失败 0。邮件正文已改为 7 天有效的 HTTPS OSS 签名媒体 URL，收件人无需 Cognito 账号；新版邮件的真实收件/点击尚待下一次匹配上传验收
 - 视频端到端：10 秒 H.264/1280×960 按 1 fps 处理 10 帧，标签 `Sus_scrofa:10` 及低阈值误报 `Bos_taurus:1`；S3/OSS 视频与 300×225 JPEG 缩略图、DDB/index、FC `Sus_scrofa>=10` 查询和签名 URL 均通过
 - 视频冷启动日志：10 帧、MegaDetector 加载 1 次、SpeciesNet 加载 1 次，126.3 s，`Max Memory Used=2802/3008 MB`，无 OOM/超时
 
-### 6. 本地单元测试 14 项 ✅
+### 6. 本地单元测试 16 项 ✅
 
 - test_aliyun × 5:access-token 契约、FC3 HTTP handler+CORS、签名 URL、OSS 读失败不得静默返回空表、缩略图 OSS host/key 严格校验（本次 5/5 复跑通过）
-- test_p0 × 7:bulk-tags、跨云删除、FilterPolicy、multipart、查询入队/匹配、index 只含 processed
+- test_p0 × 9:bulk-tags、跨云删除、FilterPolicy、multipart、查询入队/匹配、index 只含 processed、OSS 签名 URL 与通知邮件临时可访问 URL（本次容器内 9/9 复跑通过）
 - test_pipeline × 2:10 帧共用一次 detector 调用并释放分类器、Pillow 缩略图保持宽高比
-- 运行方式:`python3.12 -m unittest discover -s tests`(全量需 boto3/Pillow 可导入；当前全局 Python 缺这两项，本次按范围复跑 `test_aliyun` 5/5)
+- 运行方式:`python3.12 -m unittest discover -s tests`(全量需 boto3/Pillow 可导入；本次使用部署容器复跑 `test_p0` 9/9)
 
 ### 7. Git 与云端前端
 

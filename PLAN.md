@@ -125,7 +125,7 @@ pacific-bioarchive/
 | POST /query/tags | {"tags": {"wombat":2,"magpie":1}} 或 {"dingo": null}（无计数=≥1） | 结果列表：图片返回缩略图 URL，视频返回完整 URL |
 | GET /query/by-thumbnail?url=... | 缩略图 URL | 对应原图完整 URL |
 
-SNS 发布：process-media 对每个不同物种发一条消息，`MessageAttributes={"tag": 物种}`，正文为文件 URL JSON。订阅创建时必须真实设置 `FilterPolicy`，并在邮箱确认后完成一次指定标签通知验收。
+SNS 发布：process-media 对每个不同物种发一条消息，`MessageAttributes={"tag": 物种}`。正文包含物种、数量、文件名和 7 天有效的 HTTPS OSS 签名媒体 URL；收件人无需 Cognito 账号，OSS 仍保持 private。订阅创建时必须真实设置 `FilterPolicy`，并在邮箱确认后完成一次指定标签通知验收。
 
 ## ML 流水线（移植 batch.py）
 
@@ -170,7 +170,7 @@ SNS 发布：process-media 对每个不同物种发一条消息，`MessageAttrib
 
 | 模块 | 状态 | 验证证据/剩余工作 |
 |---|---|---|
-| ECR 容器镜像 | ✅ 依赖/视频内存修复并重新部署 | 固定 ML 依赖；视频帧在一次 MegaDetector 加载中顺序处理，SpeciesNet 分阶段驻留。当前 digest `sha256:d96410a0…`，Lambda = ECR latest 已验证 |
+| ECR 容器镜像 | ✅ 依赖/视频内存/通知链接修复并重新部署 | 固定 ML 依赖；视频帧在一次 MegaDetector 加载中顺序处理，SpeciesNet 分阶段驻留。当前 digest `sha256:1c056eb6992d…`，Lambda = ECR latest 已验证 |
 | AWS SAM 基础栈 | ✅ 完成 | `pba` 在 `us-east-1` 已 `UPDATE_COMPLETE` |
 | ProcessMedia Lambda 限制适配 | ✅ 云端实测 | Lab API 硬限 `MemorySize<=3008`；10 秒/10 帧视频冷启动峰值 2802 MB、耗时 126.3 s，`EphemeralStorage=4096`，`Timeout=900` |
 | Cognito/API Outputs | ✅ 已取得 | UserPool/Client/API URL 由 CloudFormation Outputs 动态读取，不硬编码进仓库 |
@@ -179,12 +179,12 @@ SNS 发布：process-media 对每个不同物种发一条消息，`MessageAttrib
 | QueryBucket/query-by-file | ✅ 云端实测 | 真实查询图识别 `Canis_familiaris:1` 并匹配正式文件；Files 表前后均 3 条，QueryBucket 最终 0 对象，QueryJobs=`completed` |
 | 阿里云 FC/OSS | ✅ 已部署 | FC3 `pba-query` + private `pba-oss-copy`；HTTPS URL `https://pba-query-iseukvgnef.cn-hangzhou.fcapp.run`，无/坏 token=401、OPTIONS=204 |
 | OSS 复制/索引/查询/删除 | ✅ 云端端到端 | 批量标签增/删/忽略不存在标签已验收；跨云删除后 AWS/OSS 四个对象、DDB 记录、index 与阿里云查询结果均消失；基准图不受影响 |
-| 本地单元测试 | ✅ 14 项 | `test_aliyun`×5（含缩略图 OSS host/key 严格校验，本次 5/5 通过）+ `test_p0`×7 + `test_pipeline`×2；全量复跑需带 boto3/Pillow 的 Python 3.12 环境 |
+| 本地单元测试 | ✅ 16 项 | `test_aliyun`×5 + `test_p0`×9（含 OSS 签名 URL 与通知链接，本次容器内 9/9 通过）+ `test_pipeline`×2；全量复跑需带 boto3/Pillow 的 Python 3.12 环境 |
 | Git 贡献记录 | 🟡 仓库已建立 | 私有仓库 `xlia416/pacific-bioarchive` 已建立并推送；当前仍为单一作者，Rubric 硬要求其他成员以各自账号认领模块并提交 |
 | 前端认证/上传 | ✅ 已部署 | signup/确认/signin/临时密码/guard；预签名 Content-Type、处理轮询、去重和错误提示完整，运行时 config 已注入 |
 | CloudFront HTTPS | ✅ 已部署 | private WebBucket + OAC；SPA 403/404 fallback、API CORS、`/auth/callback` 均已线上验证；URL `https://df3cv9pa7eg7p.cloudfront.net` |
 | Google 外部账号 | 🟡 已启用，待交互验收 | Google IdP 已创建，App Client providers=`COGNITO,Google`，线上按钮和跳转到 `accounts.google.com` 已验证；待演示账号完成一次授权并确认 Cognito 联邦用户记录 |
-| SNS 真实邮件通知 | ✅ 云端实测 | QQ 邮箱订阅并确认 `Sus_scrofa` FilterPolicy；上传 `Sus_scrofa_1.JPG` 识别为 `Sus_scrofa:1`，CloudWatch 显示邮件投递 1、失败 0 |
+| SNS 真实邮件通知 | 🟡 投递/过滤已实测，新链接待点击验收 | QQ 邮箱订阅并确认 `Sus_scrofa` FilterPolicy；上传 `Sus_scrofa_1.JPG` 识别为 `Sus_scrofa:1`，CloudWatch 显示邮件投递 1、失败 0。已部署 7 天 HTTPS OSS 签名链接，收件人无需 Cognito；待下一次匹配上传验收新邮件点击 |
 | 视频 1 fps | ✅ 云端端到端 | 10 秒 H.264 抽取/处理 10 帧，`Sus_scrofa:10`；S3/OSS 原视频+缩略图、DDB/index、FC 计数查询和签名 URL 均通过 |
 | Gallery/Query/Tag/Delete/Notification UI | ✅ 已部署 | 英文 UI、私有 OSS 签名媒体 Gallery、四种查询、批量标签、跨云删除和 SNS 订阅已发布；上传进度、查询/预览错误态和严格缩略图 URL 反查已补齐 |
 | query-by-file 浏览器 CORS | ✅ 已修复并部署 | API `AllowHeaders` 已加入 `x-filename`；CloudFront origin 的真实 OPTIONS 返回 204，并明确允许 `authorization,content-type,x-filename`（commit `fa260db`） |
@@ -197,7 +197,7 @@ SNS 发布：process-media 对每个不同物种发一条消息，`MessageAttrib
 2. **修正运行时 P0 ✅**：private pointer SDK 读取、QueryBucket 隔离、QueryJobs/清理、原图/缩略图 OSS 复制与入库索引已实现；ECR 新镜像已按 digest 固定到 Lambda，SAM 更新成功。
 3. **部署阿里云 ✅**：从 `pba` Outputs 注入 Cognito IDs，FC3 按 access-token `client_id/token_use` 验证，OSS 为 private 且查询结果签发短期 URL。
 4. **验证 index.json 写入私有 OSS ✅（08-27 12:00 已完成）**：维护模式调用（不加载模型）返回 200 `{"rebuilt": true}`，`pba-oss-copy/index.json` 已落桶（内容 `[]`，Files 表暂无记录，属预期）；跨云复制链路与 RAM 权限已打通。
-5. **修复 ML 镜像依赖与视频内存 ✅**：禁止 pip 回退到无 `megadetector` namespace 的 5.0.4；解决 ONNX/YOLOv5 protobuf 约束；视频帧批量共用一次 MegaDetector，两模型分阶段驻留；SAM 已绑定 `sha256:d96410a0…`。
+5. **修复 ML 镜像依赖、视频内存与通知链接 ✅**：禁止 pip 回退到无 `megadetector` namespace 的 5.0.4；解决 ONNX/YOLOv5 protobuf 约束；视频帧批量共用一次 MegaDetector，两模型分阶段驻留；SNS 邮件改用 7 天 OSS 签名链接；SAM 已绑定 `sha256:1c056eb6992d…`。
 6. **Git 卫生（仓库/push ✅，多人提交待完成）**：私有 GitHub 仓库已建立并跟踪 `origin/main`；其他 3 位成员需以各自账号认领模块提交。Rubric 硬要求全员 commit。
 7. **数据功能、SNS 与视频云端验收 ✅**：真实上传、去重、标签、query-by-file、跨云删除、邮件通知均已通过；10 秒视频按 1 fps 处理 10 帧，3008 MB 限制下峰值 2802 MB并完成跨云查询。
 8. **部署完整前端与 CloudFront ✅**：运行时 `config.js` 注入 AWS API、Cognito、阿里云 FC；完整英文 Gallery/Query/Tag/Delete/Notification UI 已发布，上传进度、查询空/错误态、图片失败占位已补齐；缩略图反查由 FC 校验 OSS host/key 并返回新签名 URL；query-by-file 所需 `X-Filename` 已加入 CORS 白名单。
@@ -215,7 +215,7 @@ SNS 发布：process-media 对每个不同物种发一条消息，`MessageAttrib
 6. 批量标签：加→删→删不存在的（ignored）。
 7. 删除：S3、OSS、DDB、后续查询全消失。
 8. 视频：用 ffmpeg 把静帧拼 10s 测试片 → 标签计数≥帧数、可查到视频完整 URL。
-9. 通知：订阅 `Sus_scrofa` 过滤 → 上传 Sus_scrofa_1.JPG → 收到确认邮件+通知邮件（注意 Cognito 50 封/天、SNS 配额，回收用同一邮箱）。
+9. 通知：订阅 `Sus_scrofa` 过滤 → 上传 Sus_scrofa_1.JPG → 收到确认邮件+通知邮件 → 不登录 Cognito 直接点击 7 天签名 URL 可打开媒体（注意 Cognito 50 封/天、SNS 配额，回收用同一邮箱）。
 10. 认证：AWS/阿里云无 token、坏 token、过期 token → 401；有效 access token → 200；Google 外部账号登录成功且 Cognito 有记录。
 11. 重建演练：fresh 环境按 ECR → AWS → 模型 → 阿里云 → 前端顺序重建，再重跑冒烟测试。
 

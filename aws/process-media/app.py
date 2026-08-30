@@ -18,6 +18,7 @@ THUMBS_BUCKET = os.environ["THUMBS_BUCKET"]
 FILES_TABLE = os.environ["FILES_TABLE"]
 QUERY_JOBS_TABLE = os.environ["QUERY_JOBS_TABLE"]
 SNS_TOPIC = os.environ["SNS_TOPIC"]
+NOTIFICATION_URL_TTL_SECONDS = int(os.environ.get("NOTIFICATION_URL_TTL_SECONDS", "604800"))
 
 files_tbl = dynamodb.Table(FILES_TABLE)
 query_jobs_tbl = dynamodb.Table(QUERY_JOBS_TABLE)
@@ -185,11 +186,42 @@ def _record_failure(event, mode: str, key: str, exc: Exception):
         traceback.print_exc()
 
 
+def _notification_url(key: str) -> str:
+    from replicate import signed_read_url
+    return signed_read_url(key, NOTIFICATION_URL_TTL_SECONDS)
+
+
+def _expiry_label(seconds: int) -> str:
+    if seconds >= 86400 and seconds % 86400 == 0:
+        days = seconds // 86400
+        return f"{days} day" if days == 1 else f"{days} days"
+    hours = max(1, seconds // 3600)
+    return f"{hours} hour" if hours == 1 else f"{hours} hours"
+
+
 def _publish_sns(result: dict):
-    for species, count in result.get("tags", {}).items():
+    tags = result.get("tags", {})
+    if not tags:
+        return
+    secure_url = _notification_url(result.get("oss_key", ""))
+    filename = result.get("filename") or result.get("checksum") or "media file"
+    expiry = _expiry_label(NOTIFICATION_URL_TTL_SECONDS)
+    for species, count in tags.items():
+        message = "\n".join([
+            "Pacific BioArchive wildlife notification",
+            "",
+            "A newly processed media file matched one of your watched tags.",
+            f"Species: {species}",
+            f"Count: {count}",
+            f"File: {filename}",
+            "",
+            f"View the private media file (link valid for {expiry}):",
+            secure_url,
+        ])
         sns.publish(
             TopicArn=SNS_TOPIC,
-            Message=json.dumps({"file": result.get("oss_url"), "species": species, "count": count}),
+            Subject=f"Pacific BioArchive: {species} detected"[:100],
+            Message=message,
             MessageAttributes={
                 "tag": {"DataType": "String", "StringValue": species},
             },

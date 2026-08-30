@@ -240,6 +240,39 @@ class WorkerQueryTests(unittest.TestCase):
         self.assertEqual(jobs.updates[0]["ExpressionAttributeValues"][":st"], "completed")
 
 
+class NotificationTests(unittest.TestCase):
+    def test_notification_contains_accessible_temporary_url(self):
+        calls = []
+        fake_sns = type(
+            "FakeSns",
+            (),
+            {"publish": lambda self, **kwargs: calls.append(kwargs)},
+        )()
+        old_sns = worker.sns
+        old_url = worker._notification_url
+        old_ttl = worker.NOTIFICATION_URL_TTL_SECONDS
+        try:
+            worker.sns = fake_sns
+            worker._notification_url = lambda key: f"https://private.example/{key}?Signature=test"
+            worker.NOTIFICATION_URL_TTL_SECONDS = 604800
+            worker._publish_sns({
+                "filename": "animal.jpg",
+                "oss_key": "uploads/abc/animal.jpg",
+                "tags": {"Sus_scrofa": 2},
+            })
+        finally:
+            worker.sns = old_sns
+            worker._notification_url = old_url
+            worker.NOTIFICATION_URL_TTL_SECONDS = old_ttl
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["Subject"], "Pacific BioArchive: Sus_scrofa detected")
+        self.assertIn("link valid for 7 days", calls[0]["Message"])
+        self.assertIn("?Signature=test", calls[0]["Message"])
+        self.assertNotIn("oss_url", calls[0]["Message"])
+        self.assertEqual(calls[0]["MessageAttributes"]["tag"]["StringValue"], "Sus_scrofa")
+
+
 class FakeIndexTable:
     def scan(self, **kwargs):
         return {
@@ -264,8 +297,17 @@ class FakeOss:
     def put_object(self, key, data, headers=None):
         self.objects[key] = data.read() if hasattr(data, "read") else data
 
+    def sign_url(self, method, key, expires, slash_safe=False):
+        return f"https://oss.example.com/{key}?expires={expires}"
+
 
 class ReplicationTests(unittest.TestCase):
+    def test_signed_read_url_uses_private_object_key_and_expiry(self):
+        fake_oss = FakeOss()
+        replicate._oss = fake_oss
+        url = replicate.signed_read_url("uploads/a/a.jpg", 604800)
+        self.assertEqual(url, "https://oss.example.com/uploads/a/a.jpg?expires=604800")
+
     def test_index_contains_only_processed_json_safe_records(self):
         fake_oss = FakeOss()
         replicate._dynamo = FakeIndexTable()

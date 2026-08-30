@@ -446,6 +446,9 @@ Resources:
       Environment:
         Variables:
           QUERY_BUCKET: !Ref QueryBucket
+          # SNS email recipients may not be Cognito users. Send a temporary
+          # capability URL while keeping the OSS bucket private.
+          NOTIFICATION_URL_TTL_SECONDS: '604800'
       # 两个模型约 470MB，另需容纳上传媒体、缩略图和视频帧。
       EphemeralStorage:
         Size: 4096

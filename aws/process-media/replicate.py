@@ -22,13 +22,21 @@ def _oss_client():
     if _oss is None:
         import oss2
         auth = oss2.Auth(OU_AK, OU_SK)
-        _oss = oss2.Bucket(auth, OU_ENDPOINT, OU_BUCKET)
+        endpoint = OU_ENDPOINT if "://" in OU_ENDPOINT else f"https://{OU_ENDPOINT}"
+        _oss = oss2.Bucket(auth, endpoint, OU_BUCKET)
     return _oss
 
 
 def _upload_bytes(key: str, data: bytes, content_type="application/octet-stream"):
     bucket = _oss_client()
     bucket.put_object(key, data, headers={"Content-Type": content_type})
+
+
+def signed_read_url(key: str, expires_seconds: int = 604800) -> str:
+    """Create a temporary HTTPS URL for an object in the private OSS bucket."""
+    if not key:
+        raise ValueError("cannot sign an empty OSS key")
+    return _oss_client().sign_url("GET", key, expires_seconds, slash_safe=True)
 
 
 def replicate_to_oss(result: dict, source_path: str, thumbnail_path: str):
