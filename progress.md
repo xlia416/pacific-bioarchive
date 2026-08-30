@@ -73,13 +73,14 @@
 ### 7. Git 与云端前端
 
 - 私有仓库 `xlia416/pacific-bioarchive` 已建立，`main` 已推送并跟踪 `origin/main`
-- 当前 17 个 commit，仍只有 `lxh` 一位作者；其他成员提交仍是 rubric 风险
+- 当前 22 个 commit，仍只有 `lxh` 一位作者；其他成员提交仍是 rubric 风险
 - CloudFront HTTPS、完整功能 UI、Cognito Google IdP 已部署；Google 登录按钮与跳转已验证，待真实账号完成一次授权并确认联邦用户记录
 - 08-30 交互修正已部署：全站用户可见文案改为英文；上传显示 checksum/上传百分比/ML 处理状态；预览与查询失败有明确反馈。缩略图反查不再直接渲染用户输入 URL，FC 严格校验 HTTPS OSS host + `thumbs/<sha256>/thumb.jpg`，命中后返回新签名缩略图/原图 URL，错误主机/路径=400、不存在=404。
+- 08-30 视觉改版已部署并由用户验收：改为雾蓝灰+暖白+海蓝强调色，媒体卡片使用轻描边/柔和阴影；Bulk actions 与 Notifications 已拆分，批量操作移入 Media library 顶部工具条；成功提示可关闭并在 4.5 秒后自动消失。
 
 ## 待办(按优先级)
 
-1. **Git 风险(评分硬要求)**：仓库和 remote 已完成，但 17 个 commit 仍全部为单一作者；其他 3 位组员需按分工提交各自模块。
+1. **Git 风险(评分硬要求)**：仓库和 remote 已完成，但 22 个 commit 仍全部为单一作者；其他 3 位组员需按分工提交各自模块。
 2. **Google 外部账号最终验收**：用真实 Google 账号完成授权，确认 Cognito `Google_...` 联邦用户及 AWS/阿里云 access-token 调用。
 3. **前端交互验收**：英文 UI、加载/失败状态与严格缩略图反查已部署；需通过页面走完上传、query-by-file、缩略图反查、标签、删除和通知并留证据。
 4. **端到端冒烟**:单图、去重、query-by-file、标签、删除、通知、视频已通过；

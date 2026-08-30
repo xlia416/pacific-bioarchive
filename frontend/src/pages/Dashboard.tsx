@@ -6,6 +6,19 @@ import { UploadPanel } from '../components/UploadPanel';
 
 type Feedback = { kind: 'success' | 'error' | 'info'; text: string } | null;
 
+function FeedbackBanner({ feedback, onDismiss }: { feedback: Feedback; onDismiss?: () => void }) {
+  useEffect(() => {
+    if (!feedback || feedback.kind !== 'success' || !onDismiss) return;
+    const timer = window.setTimeout(onDismiss, 4500);
+    return () => window.clearTimeout(timer);
+  }, [feedback, onDismiss]);
+  if (!feedback) return null;
+  return <div className={`feedback ${feedback.kind}`} role={feedback.kind === 'error' ? 'alert' : 'status'}>
+    <span>{feedback.text}</span>
+    {onDismiss && <button className="feedback-dismiss" type="button" aria-label="Dismiss message" onClick={onDismiss}>×</button>}
+  </div>;
+}
+
 function errorMessage(error: unknown, fallback = 'Something went wrong. Please try again.') {
   if (error instanceof ApiError && error.status === 404) return 'No media matches this request.';
   if (error instanceof ApiError && error.status === 400) return error.message || 'The request is invalid.';
@@ -126,10 +139,8 @@ function QueryPanel() {
   </section>;
 }
 
-function ManagementPanel({ selected, onChanged }: { selected: string[]; onChanged: () => void }) {
+function BulkActions({ selected, onChanged }: { selected: string[]; onChanged: () => void }) {
   const [tags, setTags] = useState('research');
-  const [email, setEmail] = useState('');
-  const [watchTags, setWatchTags] = useState('Sus_scrofa');
   const [feedback, setFeedback] = useState<Feedback>(null);
   const [busy, setBusy] = useState(false);
   const parsedTags = (value: string) => value.split(',').map((tag) => tag.trim()).filter(Boolean);
@@ -149,6 +160,27 @@ function ManagementPanel({ selected, onChanged }: { selected: string[]; onChange
     catch (error) { setFeedback({ kind: 'error', text: errorMessage(error, 'Delete failed.') }); }
     finally { setBusy(false); }
   };
+
+  return <div className="bulk-actions">
+    <div className="bulk-summary"><strong>Bulk actions</strong><span>{selected.length} selected</span></div>
+    <div className="bulk-controls">
+      <label className="sr-only" htmlFor="bulk-tags">Tags, comma separated</label>
+      <input id="bulk-tags" value={tags} onChange={(event) => setTags(event.target.value)} placeholder="Tags, comma separated" disabled={busy || !selected.length} />
+      <button disabled={busy || !selected.length || !parsedTags(tags).length} type="button" onClick={() => void mutate(1)}>Add tags</button>
+      <button disabled={busy || !selected.length || !parsedTags(tags).length} type="button" className="secondary" onClick={() => void mutate(0)}>Remove tags</button>
+      <button disabled={busy || !selected.length} type="button" className="danger" onClick={() => void remove()}>Delete</button>
+    </div>
+    <FeedbackBanner feedback={feedback} onDismiss={() => setFeedback(null)} />
+  </div>;
+}
+
+function NotificationPanel() {
+  const [email, setEmail] = useState('');
+  const [watchTags, setWatchTags] = useState('Sus_scrofa');
+  const [feedback, setFeedback] = useState<Feedback>(null);
+  const [busy, setBusy] = useState(false);
+  const parsedTags = (value: string) => value.split(',').map((tag) => tag.trim()).filter(Boolean);
+
   const subscribe = async (event: React.FormEvent) => {
     event.preventDefault(); setBusy(true); setFeedback(null);
     try { const result = await api.subscribe(email, parsedTags(watchTags)); setFeedback({ kind: 'success', text: `Confirmation email sent for: ${result.watch_tags.join(', ')}.` }); }
@@ -156,13 +188,14 @@ function ManagementPanel({ selected, onChanged }: { selected: string[]; onChange
     finally { setBusy(false); }
   };
 
-  return <section className="panel management-panel">
-    <div className="panel-heading"><div><h2>Bulk management & notifications</h2><p>{selected.length} item{selected.length === 1 ? '' : 's'} selected</p></div></div>
-    <div className="management-grid">
-      <div className="management-block"><div className="field"><label htmlFor="bulk-tags">Tags (comma separated)</label><input id="bulk-tags" value={tags} onChange={(event) => setTags(event.target.value)} /></div><div className="button-row"><button disabled={busy} type="button" onClick={() => void mutate(1)}>Add tags</button><button disabled={busy} type="button" className="secondary" onClick={() => void mutate(0)}>Remove tags</button><button disabled={busy} type="button" className="danger" onClick={() => void remove()}>Delete files</button></div></div>
-      <form onSubmit={subscribe}><div className="field"><label htmlFor="notification-email">Email notifications</label><input id="notification-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" required /></div><div className="field"><label htmlFor="notification-tags">Watched tags</label><input id="notification-tags" value={watchTags} onChange={(event) => setWatchTags(event.target.value)} placeholder="Sus_scrofa, dingo" required /></div><button disabled={busy}>Subscribe to tags</button></form>
-    </div>
-    {feedback && <p className={`feedback ${feedback.kind}`} role={feedback.kind === 'error' ? 'alert' : 'status'}>{feedback.text}</p>}
+  return <section className="card notification-panel">
+    <div className="panel-heading"><div><h2>Email notifications</h2><p>Get notified when newly processed media matches watched species.</p></div></div>
+    <form className="notification-form" onSubmit={subscribe}>
+      <div className="field"><label htmlFor="notification-email">Email address</label><input id="notification-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" required /></div>
+      <div className="field"><label htmlFor="notification-tags">Watched tags</label><input id="notification-tags" value={watchTags} onChange={(event) => setWatchTags(event.target.value)} placeholder="Sus_scrofa, dingo" required /></div>
+      <button disabled={busy}>{busy ? 'Subscribing…' : 'Subscribe'}</button>
+    </form>
+    <FeedbackBanner feedback={feedback} onDismiss={() => setFeedback(null)} />
   </section>;
 }
 
@@ -203,10 +236,11 @@ export function Dashboard() {
     <header className="topbar"><div><span className="brand">Pacific BioArchive</span><small>Multi-cloud wildlife media platform</small></div><button className="secondary" onClick={() => { signOut(); navigate('/signup'); }}>Sign out</button></header>
     <main className="dashboard-grid">
       <UploadPanel onComplete={refresh} />
-      <ManagementPanel selected={selectedIds} onChanged={() => { setSelected(new Set()); void refresh(); }} />
+      <NotificationPanel />
       <QueryPanel />
       <section className="panel library-panel">
         <div className="panel-heading library-heading"><div><h2>Media library</h2><p>{files.length} total · {filteredFiles.length} shown · {selected.size} selected</p></div><div className="library-tools"><input aria-label="Filter media" value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter by filename, tag or checksum" /><div className="button-row compact"><button type="button" className="secondary" disabled={!filteredFiles.length || allFilteredSelected} onClick={selectFiltered}>Select shown</button><button type="button" className="secondary" disabled={!selected.size} onClick={() => setSelected(new Set())}>Clear selection</button><button type="button" className="secondary" disabled={loading} onClick={() => void refresh()}>{loading ? 'Refreshing…' : 'Refresh'}</button></div></div></div>
+        <BulkActions selected={selectedIds} onChanged={() => { setSelected(new Set()); void refresh(); }} />
         {error && <p className="feedback error" role="alert">{error}</p>}
         {loading && !files.length ? <div className="library-loading"><span className="spinner" /> Loading media library…</div> : <ResultCards files={filteredFiles} selectable selected={selected} onToggle={toggle} emptyText={filter ? 'No items match this filter.' : 'No media has been uploaded yet.'} />}
       </section>
